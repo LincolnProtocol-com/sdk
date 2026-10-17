@@ -84,19 +84,20 @@ async function refreshGasPrice() {
     gasPriceWei = base * 2n > base + 20_000_000n ? base * 2n : base + 20_000_000n;
   } catch { gasPriceAt = 0; }
 }
-/** Outputs a JoinSplit from this app always has: zero-value outputs still carry a real commitment. */
-export const JOINSPLIT_OUTPUTS = 2;
+/** Output count the shown estimates assume: the largest JoinSplit shape. A zero-value output has commitment 0 and is
+ *  not counted, so a real spend has 0, 1 or 2 outputs; spends quote their actual count (operations.ts settles it). */
+export const ESTIMATE_OUTPUTS = 2;
 
 /** Estimated gas part, in the pool asset, of one operation under dynamic pricing (what a quote would say now). */
-function dynamicGas(d: GasPricing, key: PartKey, outputs = JOINSPLIT_OUTPUTS): bigint {
+function dynamicGas(d: GasPricing, key: PartKey, outputs = ESTIMATE_OUTPUTS): bigint {
   if (!d.price) return 0n;
   const raw = key === 'holderExit' ? d.models.holderExit : d.models[key][outputs] ?? 0n;
   const gas = ceil(raw * BigInt(10_000 + d.bufferBps), 10_000n);
   const price = gasPriceWei === null ? d.maxGasPrice : gasPriceWei > d.maxGasPrice && d.maxGasPrice > 0n ? d.maxGasPrice : gasPriceWei;
   return ceil(gas * price * d.price.den, d.price.num);
 }
-const gasPart = (p: FeePolicy, key: PartKey) => (!p[key].gas ? 0n : p.dynamic ? dynamicGas(p.dynamic, key) : p.gas);
-const charge = (p: FeePolicy, key: PartKey, gross: bigint) => gross * BigInt(p[key].bps) / 10_000n + gasPart(p, key) + p[key].fixed;
+const gasPart = (p: FeePolicy, key: PartKey, outputs?: number) => (!p[key].gas ? 0n : p.dynamic ? dynamicGas(p.dynamic, key, outputs) : p.gas);
+const charge = (p: FeePolicy, key: PartKey, gross: bigint, outputs?: number) => gross * BigInt(p[key].bps) / 10_000n + gasPart(p, key, outputs) + p[key].fixed;
 
 /** Fee the relayer takes from a public withdrawal of `amount` (paid out of it). An estimate under dynamic gas. */
 export const relayFee = (pool: PoolId, amount: bigint) => charge(feePolicy(pool), 'withdrawal', amount);
@@ -130,21 +131,44 @@ export function loadServiceFees(pool: PoolId, fetchConfig: (pool: PoolId) => Pro
 /** Drops a pool's loaded schedule, so the next read asks the relay again (it switched pricing modes under us). */
 export function forgetServiceFees(pool: PoolId) { loading.delete(pool); delete FEE_POLICY[pool]; }
 
+const PART: Record<FeeQuoteKind, PartKey> = { withdrawal: 'withdrawal', 'private-transfer': 'privateTransfer', 'holder-exit': 'holderExit' };
+/** Local estimate of one spend's fee with `outputs` output commitments (exact under a fixed schedule). */
+export const estimateFee = (pool: PoolId, kind: FeeQuoteKind, gross: bigint, outputs?: number) =>
+  charge(feePolicy(pool), PART[kind], kind === 'private-transfer' ? 0n : gross, outputs);
+/** Raw (unbuffered) gas units of the model for one shape: the floor a quote request may raise but never lower. */
+export function modelGas(pool: PoolId, kind: FeeQuoteKind, outputs: number): bigint {
+  const d = feePolicy(pool).dynamic;
+  return !d ? 0n : kind === 'holder-exit' ? d.models.holderExit : d.models[PART[kind] as 'withdrawal'][outputs] ?? 0n;
+}
+
 /** A fee ready to prove: the quote it came from (dynamic pricing), or null under a fixed schedule. */
 export interface PricedFee { fee: bigint; quote: FeeQuote | null }
-const PART: Record<FeeQuoteKind, PartKey> = { withdrawal: 'withdrawal', 'private-transfer': 'privateTransfer', 'holder-exit': 'holderExit' };
 
-/** The exact fee for one new spend. Under dynamic pricing this asks the relay for a fresh, single-use quote
- *  (it expires in about two minutes and binds to one job); otherwise it is the fixed schedule's fee. */
+/** Codes a quote request gets when the relay left per-transaction pricing since its schedule was read
+ *  (a fixed-fee /v3/fees takes only kind and grossAmount). */
+const LEFT_DYNAMIC = new Set(['UNEXPECTED_FIELDS', 'FEE_QUOTE_DISABLED', 'INVALID_SERVICE_FEE_KIND']);
+
+/** The exact fee for one new spend with `outputCount` output commitments (0 for a holder exit). Under dynamic pricing
+ *  this asks the relay for a fresh, single-use quote (it expires in about two minutes and binds to one job); otherwise
+ *  it is the fixed schedule's fee. A schedule that no longer matches the relay's mode is re-read once, never looped. */
 export async function priceFee(pool: PoolId, kind: FeeQuoteKind, gross: bigint, { outputCount, gasUnits }: { outputCount?: number; gasUnits?: bigint } = {}): Promise<PricedFee> {
-  const policy = await loadServiceFees(pool);
-  const outputs = outputCount ?? (kind === 'holder-exit' ? 0 : JOINSPLIT_OUTPUTS);
-  if (!policy.dynamic) return { fee: kind === 'private-transfer' ? charge(policy, PART[kind], 0n) : charge(policy, PART[kind], gross), quote: null };
+  const outputs = kind === 'holder-exit' ? 0 : outputCount ?? ESTIMATE_OUTPUTS;
+  let policy = await loadServiceFees(pool);
+  // A price that went stale may have been refreshed since the schedule was read: look once more before pausing.
+  if (policy.dynamic && !policy.dynamic.available && Date.now() - (loading.get(pool)?.at ?? 0) > 10_000) { forgetServiceFees(pool); policy = await loadServiceFees(pool); }
+  if (!policy.dynamic) return { fee: estimateFee(pool, kind, gross, outputs), quote: null };
   if (!policy.dynamic.available) throw new RelayError(policy.dynamic.unavailableReason ?? 'FEE_QUOTES_UNAVAILABLE');
   const grossAmount = kind === 'private-transfer' ? 0n : gross;
-  // A larger raw estimate (after FEE_QUOTE_COST_EXCEEDED) never goes below the model the relay requires.
-  const model = kind === 'holder-exit' ? policy.dynamic.models.holderExit : policy.dynamic.models[PART[kind] as 'withdrawal'][outputs] ?? 0n;
-  const q = await requestFeeQuote(pool, { kind, grossAmount, outputCount: outputs, ...(gasUnits !== undefined && gasUnits > model ? { gasUnits } : {}) });
+  // A larger raw estimate (after FEE_QUOTE_COST_EXCEEDED, or a shape settled upwards) never goes below the shape's model.
+  const model = modelGas(pool, kind, outputs);
+  let q: FeeQuote;
+  try { q = await requestFeeQuote(pool, { kind, grossAmount, outputCount: outputs, ...(gasUnits !== undefined && gasUnits > model ? { gasUnits } : {}) }); }
+  catch (e) {
+    if (!(e instanceof RelayError && LEFT_DYNAMIC.has(e.code))) throw e;
+    forgetServiceFees(pool);
+    if ((await loadServiceFees(pool)).dynamic) throw e;
+    return { fee: estimateFee(pool, kind, gross, outputs), quote: null };
+  }
   const info = POOLS[pool], fee = units(q.totalFee);
   // The quote binds pool, processor and shape; a mismatching answer is never proved.
   if (q.kind !== kind || q.outputCount !== outputs || q.grossAmount !== String(grossAmount) || !/^[0-9a-f]{64}$/.test(q.quoteId)
@@ -154,5 +178,7 @@ export async function priceFee(pool: PoolId, kind: FeeQuoteKind, gross: bigint, 
   if (q.gasPriceWei) { gasPriceWei = units(q.gasPriceWei); gasPriceAt = Date.now(); }
   return { fee, quote: q };
 }
+/** Raw gas units a quote was priced on (its model or a raised estimate). */
+export const quotedRawGas = (q: FeeQuote) => units(q.rawGasUnits ?? '0');
 /** Whether a quote still has `marginMs` left before it expires. */
 export const quoteLive = (p: PricedFee | null, marginMs = 10_000) => !!p && (!p.quote || Date.parse(p.quote.expiresAt) - Date.now() > marginMs);

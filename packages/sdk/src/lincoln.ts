@@ -12,7 +12,7 @@ import { NET, type NetworkInfo, type NetworkName } from './core/network.js';
 import { POOLS, chain, explorerTx, findPool, publicClient, selectNetwork, type PoolInfo } from './core/pools.js';
 import { loadPoolState } from './core/state.js';
 import { RelayError, getJob, quoteMinOut, quoteOut, relayConfig, relayHealth, type Quote as RelayQuote } from './core/relay.js';
-import { exitFee, feePolicy, loadServiceFees, priceFee, relayFee, transferFee, type PricedFee } from './core/fees.js';
+import { exitFee, feePolicy, loadServiceFees, relayFee, transferFee } from './core/fees.js';
 import { deposit, getQuote, inspect, spend, swap, type OpStage } from './core/operations.js';
 import { setCircuitCache } from './core/prover.js';
 import { createKey, readKeyFile, unlockKey, walletKeys, writePrivate } from './core/keystore.js';
@@ -334,13 +334,11 @@ export class Lincoln {
       : `$${q.usd.toFixed(2)} is above the approval threshold. Ask the user, then execute with approval.`, { quoteId: id, usd: q.usd });
 
     const pool = POOLS[q.pool], raw = BigInt(q.amountRaw);
-    /** The relay's fee for this spend now (a binding quote under per-transaction gas). It may rise a little over the
-     *  quoted estimate as gas moves; much more means quote again. */
-    const priced = async (kind: 'withdrawal' | 'private-transfer'): Promise<PricedFee> => {
-      const p = await priceFee(q.pool, kind, kind === 'withdrawal' ? raw : 0n), quoted = parseUnits(q.fee ?? '0', pool.decimals);
-      if (p.fee > quoted + quoted / 4n) throw new LincolnError('QUOTE_MOVED', `The relay fee rose to ${fmt(p.fee, pool.decimals)} ${q.asset}. Quote again.`);
-      return p;
-    };
+    // The quoted fee was an estimate (its gas model is the largest shape). The spend prices its real shape with the
+    // relay and may charge less; more than a quarter above the estimate shown to the user stops it (QUOTE_MOVED).
+    const quotedFee = parseUnits(q.fee ?? '0', pool.decimals), maxFee = quotedFee + quotedFee / 4n;
+    const limit = (e: unknown) => e instanceof RelayError && e.code === 'FEE_ABOVE_LIMIT'
+      ? new LincolnError('QUOTE_MOVED', `The relay fee rose above ${fmt(maxFee, pool.decimals)} ${q.asset}. Quote again.`) : e;
     const row: ActivityRow = { at: new Date().toISOString(), quoteId: id, action: q.action, pool: q.pool, asset: q.asset, amount: q.amount, usd: q.usd, status: 'submitted' };
     const persist = (a: sdk.Account) => this.persistNotes(a);
     const submitted = (ref: { jobId?: string; hash?: string }) => { Object.assign(row, ref.jobId ? { jobId: ref.jobId } : {}, ref.hash ? { txHash: ref.hash } : {}); void this.record(row); onSubmitted?.(ref); };
@@ -348,21 +346,23 @@ export class Lincoln {
       let result: { hash: Hex; jobId?: string }, bridge: ExecResult['bridge'], message: string;
       if (q.action === 'send') {
         const receiver = decodeReceiver(q.to!, q.pool);
-        result = await spend({ account: this.account, pool: q.pool, amount: raw, receiver, fee: await priced('private-transfer'), onStage, persist, onSubmitted: submitted });
+        result = await spend({ account: this.account, pool: q.pool, amount: raw, receiver, maxFee, onStage, persist, onSubmitted: submitted }).catch(e => { throw limit(e); });
         message = `Sent ${q.amount} ${q.asset} privately.`;
       } else if (q.action === 'withdraw' && !q.chain) {
-        result = await spend({ account: this.account, pool: q.pool, amount: raw, recipient: q.to, fee: await priced('withdrawal'), onStage, persist, onSubmitted: submitted });
+        result = await spend({ account: this.account, pool: q.pool, amount: raw, recipient: q.to, maxFee, onStage, persist, onSubmitted: submitted }).catch(e => { throw limit(e); });
         message = `Withdrew ${q.receives} ${q.asset} to ${q.to}.`;
       } else if (q.action === 'withdraw' && findIntentChain(q.chain!)) {
         if (!bridgeLive()) throw new LincolnError('BRIDGE_TESTNET', 'Cross-chain withdrawals work on Robinhood Chain mainnet only.');
         const intent = findIntentChain(q.chain!)!, route = intentRoute(pool, intent, q.receivesAsset)!;
-        // Priced first: NEAR Intents is quoted for exactly what this withdrawal delivers.
-        const fee = await priced('withdrawal');
-        const live = await quoteIntent({ route, amount: raw - fee.fee, recipient: q.to!, refundTo: q.refund!, dry: false }).catch(e => { throw new LincolnError('BRIDGE_UNAVAILABLE', (e as Error).message); });
-        if (!live.depositAddress) throw new LincolnError('BRIDGE_UNAVAILABLE', 'NEAR Intents did not return a deposit address.');
-        if (q.minReceives && BigInt(live.amountOut) < parseUnits(q.minReceives, route.decimals)) throw new LincolnError('QUOTE_MOVED', `NEAR Intents now pays ${live.amountOutFormatted} ${route.symbol}, below the quoted minimum. Quote again.`);
-        const deposit = live.depositAddress;
-        result = await spend({ account: this.account, pool: q.pool, amount: raw, recipient: deposit, fee, onStage, persist, onSubmitted: submitted });
+        // The NEAR Intents order is placed only once the withdrawal's final fee is known, for exactly what it delivers.
+        const held: { live?: Awaited<ReturnType<typeof quoteIntent>> } = {};
+        result = await spend({ account: this.account, pool: q.pool, amount: raw, maxFee, onStage, persist, onSubmitted: submitted, recipient: async fee => {
+          const live = await quoteIntent({ route, amount: raw - fee, recipient: q.to!, refundTo: q.refund!, dry: false }).catch(e => { throw new LincolnError('BRIDGE_UNAVAILABLE', (e as Error).message); });
+          if (!live.depositAddress) throw new LincolnError('BRIDGE_UNAVAILABLE', 'NEAR Intents did not return a deposit address.');
+          if (q.minReceives && BigInt(live.amountOut) < parseUnits(q.minReceives, route.decimals)) throw new LincolnError('QUOTE_MOVED', `NEAR Intents now pays ${live.amountOutFormatted} ${route.symbol}, below the quoted minimum. Quote again.`);
+          held.live = live; return live.depositAddress;
+        } }).catch(e => { throw limit(e); });
+        const live = held.live!, deposit = live.depositAddress!;
         void submitIntentDeposit(result.hash, deposit);
         // Bitcoin takes several minutes; follow for up to 15, then hand back the deposit address to check later.
         let status = 'PENDING_DEPOSIT', hashes: string[] | undefined;
@@ -375,16 +375,19 @@ export class Lincoln {
       } else if (q.action === 'withdraw') {
         if (!bridgeLive()) throw new LincolnError('BRIDGE_TESTNET', 'Bridging works on Robinhood Chain mainnet only.');
         const target = findChain(q.chain!)!;
-        // The bridge must be quoted for exactly what the withdrawal delivers: price the withdrawal first.
-        const fee = await priced('withdrawal');
-        const live = await quoteBridge({ pool, dest: target, receive: q.receivesAsset, amount: raw - fee.fee, recipient: q.to!, refundTo: q.refund ?? q.to!, live: true });
-        if (!live.depositAddress || !live.requestId) throw new LincolnError('BRIDGE_UNAVAILABLE', 'The bridge did not return a deposit address.');
-        if (q.minReceives && Number(live.amountOutFormatted) < Number(q.minReceives)) throw new LincolnError('QUOTE_MOVED', `The bridge now pays ${live.amountOutFormatted}, below the quoted minimum. Quote again.`);
-        result = await spend({ account: this.account, pool: q.pool, amount: raw, recipient: live.depositAddress, fee, onStage, persist, onSubmitted: submitted });
-        void nudgeBridge(live.depositAddress);
+        // The bridge order is placed only once the withdrawal's final fee is known, for exactly what it delivers.
+        const held: { live?: Awaited<ReturnType<typeof quoteBridge>> } = {};
+        result = await spend({ account: this.account, pool: q.pool, amount: raw, maxFee, onStage, persist, onSubmitted: submitted, recipient: async fee => {
+          const live = await quoteBridge({ pool, dest: target, receive: q.receivesAsset, amount: raw - fee, recipient: q.to!, refundTo: q.refund ?? q.to!, live: true });
+          if (!live.depositAddress || !live.requestId) throw new LincolnError('BRIDGE_UNAVAILABLE', 'The bridge did not return a deposit address.');
+          if (q.minReceives && Number(live.amountOutFormatted) < Number(q.minReceives)) throw new LincolnError('QUOTE_MOVED', `The bridge now pays ${live.amountOutFormatted}, below the quoted minimum. Quote again.`);
+          held.live = live; return live.depositAddress;
+        } }).catch(e => { throw limit(e); });
+        const live = held.live!;
+        void nudgeBridge(live.depositAddress!);
         let status = 'waiting', hashes: string[] | undefined;
         for (const until = Date.now() + 5 * 60_000; !BRIDGE_DONE.has(status) && Date.now() < until; await new Promise(r => setTimeout(r, 4000))) {
-          try { const s = await bridgeStatus(live.requestId); status = s.status; hashes = s.txHashes; } catch { /* keep polling */ }
+          try { const s = await bridgeStatus(live.requestId!); status = s.status; hashes = s.txHashes; } catch { /* keep polling */ }
         }
         bridge = { status, txHashes: hashes };
         message = status === 'success' ? `Delivered ${live.amountOutFormatted} on ${target.name}.` : `Withdrawn to the bridge; bridge status: ${status}.`;

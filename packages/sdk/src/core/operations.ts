@@ -7,7 +7,7 @@ import { POOLS, POOL_ABI, chain, publicClient, type PoolId } from './pools.js';
 import { loadPoolState, type PoolState } from './state.js';
 import { RETRYABLE, RelayError, newJobId, relayQuote, submitJob, waitForJob, type FeeQuoteKind, type JobKind, type Quote } from './relay.js';
 import { prove, type Circuit, type ProofStage } from './prover.js';
-import { forgetServiceFees, priceFee, quoteLive, type PricedFee } from './fees.js';
+import { estimateFee, forgetServiceFees, priceFee, quoteLive, quotedRawGas, type PricedFee } from './fees.js';
 import { minChangeFor } from './denominations.js';
 
 export type OpStage = 'sync' | 'prepare' | ProofStage | 'save' | 'sign' | 'relay' | 'confirm' | 'done';
@@ -50,39 +50,86 @@ export async function deposit({ account, pool, amount, wallet, onStage, onSubmit
 }
 
 const MAX_REPROVE = 3;
-/** What a relayed spend pays: its quote kind and gross amount. `preset` is a fee the caller already priced and
- *  built on (a bridge quoted for exactly what arrives): a fresh quote must then charge the same, or nothing is sent. */
-interface Pricing { kind: FeeQuoteKind; gross: bigint; preset?: PricedFee }
+/** Quote/build rounds allowed to make a fee and its transaction's output count agree (see settle). */
+const MAX_SETTLE = 4;
+/** What a relayed spend pays.
+ *  - `hint`: a fee the caller already priced (its shape is tried first).
+ *  - `maxFee`: the most the user approved; a higher final fee stops before proving.
+ *  - `lock`: runs once with the final fee before the first proof (a bridge order sized to gross − fee). After it the
+ *    fee may not change: a new quote must charge the same, or nothing is sent. */
+interface Pricing { kind: FeeQuoteKind; gross: bigint; hint?: PricedFee; maxFee?: bigint; lock?: (fee: bigint) => Promise<void> }
 type Built = { prepared: { inputSignals: Record<string, unknown>; publicSignals: string[] }; transaction: (proof: unknown) => unknown; beforeSubmit?: () => void | Promise<void>; routeId?: string };
-/** Outputs the relay counts for a fee quote: non-zero JoinSplit output commitments; a holder exit has none. */
-const outputCount = (circuit: Circuit, prepared: Built['prepared']) => circuit === 'holder-exit' ? 0 : prepared.publicSignals.slice(7, 9).filter(v => BigInt(v) !== 0n).length;
+/** Outputs the relay counts for a fee quote: non-zero JoinSplit output commitments (a zero-value output's commitment
+ *  is 0), so 0, 1 or 2; a holder exit has none. */
+export const outputCount = (circuit: Circuit, prepared: Built['prepared']) => circuit === 'holder-exit' ? 0 : prepared.publicSignals.slice(7, 9).filter(v => BigInt(v) !== 0n).length;
 const FEE_REQUOTE = new Set(['FEE_QUOTE_EXPIRED', 'FEE_QUOTE_COST_EXCEEDED', 'FEE_QUOTE_UNKNOWN', 'FEE_QUOTE_REPLAY']);
 /** The relay switched between fixed and per-transaction gas pricing since its schedule was read. */
 const FEE_MODE_CHANGED = new Set(['FEE_QUOTE_REQUIRED', 'FEE_QUOTE_DISABLED', 'FEE_QUOTE_NOT_APPLICABLE']);
+/** Codes after which the relay asks for the identical request again under the same ID (nothing new to prove). */
+const SAME_REQUEST_LATER = new Set(['PENDING_NONCE', 'RELAY_UNRESOLVED_TRANSACTION', 'RELAY_REQUEST_QUEUE_FULL']);
+
+/** What a refused submit allows, from the relay's recovery fields only; anything missing or partial is "uncertain".
+ *  - unused: no job was stored and nothing is in flight: a new proof may use the same, still unused, ID.
+ *  - identical: the relay kept the job and wants this exact request again under its ID.
+ *  - terminal: the job was stored and stopped before any transaction: a new proof needs a new ID.
+ *  - uncertain: keep the original ID; never prove or send another payment. */
+export function recoveryOf(e: RelayError): 'unused' | 'identical' | 'terminal' | 'uncertain' {
+  const i = e.info;
+  if (e.mayHaveRun || i.transactionHash || i.jobMayContinue !== false) return 'uncertain';
+  if (i.jobPersisted === false && i.retrySameId === true && (i.jobStatus === undefined || i.jobStatus === 'not-created')) return 'unused';
+  if (i.jobPersisted === true && i.retrySameId === true && i.recovery === 'RETRY_IDENTICAL_REQUEST_WITH_ORIGINAL_ID') return 'identical';
+  if (i.jobPersisted === true && i.retrySameId === false && (i.jobStatus === 'cancelled' || i.jobStatus === 'reverted')) return 'terminal';
+  return 'uncertain';
+}
 
 async function relayed(pool: PoolId, kind: JobKind, circuit: Circuit, onStage: Common['onStage'], onSubmitted: Common['onSubmitted'],
   build: (state: PoolState, fee: bigint) => Built, pricing?: Pricing,
 ): Promise<OpResult> {
   // A pool whose relay is not configured yet (relayer null in its profile) takes deposits only.
   if (!POOLS[pool].relayer) throw new RelayError('RELAY_NOT_LIVE');
-  // One ID for the whole operation: a retry after a clear "not created" reuses it (retrySameId), never a new one.
+  // One ID per transaction: reused while the relay confirms it never stored a job, replaced only after a proven stop.
   let id = newJobId();
-  let priced: PricedFee | null = pricing?.preset ?? null, gasUnits: bigint | undefined;
-  // Dynamic quotes are single use and short lived: a fresh one whenever the last is near expiry or was refused.
-  const quote = async (outputs?: number) => {
-    const next = await priceFee(pool, pricing!.kind, pricing!.gross, { outputCount: outputs, gasUnits });
-    if (pricing!.preset && next.fee !== pricing!.preset.fee) throw new RelayError('FEE_CHANGED');
+  let priced: PricedFee | null = pricing?.hint ?? null, floor = 0n, locked: bigint | null = null;
+  const quote = async (outputs: number) => {
+    const next = await priceFee(pool, pricing!.kind, pricing!.gross, { outputCount: outputs, gasUnits: floor || undefined });
+    if (locked !== null && next.fee !== locked) throw new RelayError('FEE_CHANGED');
+    if (pricing!.maxFee !== undefined && next.fee > pricing!.maxFee) throw new RelayError('FEE_ABOVE_LIMIT');
     return next;
+  };
+  /** Makes the quote and the transaction agree before anything is proved. A fee change can change which notes a
+   *  private payment selects and whether it leaves change, so the count is checked after every build. A mismatch is
+   *  first re-quoted for the actual shape (so a smaller shape pays less); if that moves the shape again, the two are
+   *  cycling through an exact-input boundary, and from then on quotes keep the largest gas already quoted: the fee
+   *  stops depending on the shape, the build stops moving, and the next quote matches. */
+  const settle = async (state: PoolState): Promise<Built> => {
+    if (!pricing) return build(state, 0n);
+    let outputs = priced?.quote ? priced.quote.outputCount : circuit === 'holder-exit' ? 0 : undefined;
+    if (outputs === undefined) {
+      // Dry run on the local estimate: a withdrawal's shape does not depend on its fee, so it is usually right first time.
+      try { outputs = outputCount(circuit, build(state, priced?.fee ?? estimateFee(pool, pricing.kind, pricing.gross)).prepared); } catch { outputs = 2; }
+    }
+    let mismatches = 0, largest = floor;
+    for (let round = 0; round < MAX_SETTLE; round++) {
+      if (!priced || !quoteLive(priced, 30_000) || (priced.quote && (priced.quote.outputCount !== outputs || quotedRawGas(priced.quote) < floor))) priced = await quote(outputs);
+      if (priced.quote) largest = largest > quotedRawGas(priced.quote) ? largest : quotedRawGas(priced.quote);
+      const built = build(state, priced.fee), n = outputCount(circuit, built.prepared);
+      if (!priced.quote || n === priced.quote.outputCount) return built;
+      if (++mismatches >= 2) floor = largest;
+      outputs = n;
+    }
+    throw new RelayError('FEE_SHAPE_UNSETTLED');
   };
   for (let attempt = 0; ; attempt++) {
     onStage?.('sync');
     const state = await loadPoolState(pool);
     onStage?.('prepare');
-    if (pricing && !quoteLive(priced, 30_000)) priced = await quote();
-    let built = build(state, priced?.fee ?? 0n);
-    if (priced?.quote && outputCount(circuit, built.prepared) !== priced.quote.outputCount) {
-      priced = await quote(outputCount(circuit, built.prepared));
-      built = build(state, priced.fee);
+    let built = await settle(state);
+    if (pricing?.lock && locked === null) {
+      // The final fee is known: the caller sizes its external order now, then the fee is fixed for this operation.
+      const fee = priced!.fee; await pricing.lock(fee); locked = fee;
+      const shape = outputCount(circuit, built.prepared);
+      built = build(state, fee);
+      if (outputCount(circuit, built.prepared) !== shape) throw new RelayError('FEE_SHAPE_UNSETTLED');
     }
     const { prepared, transaction, beforeSubmit, routeId } = built;
     const proof = await prove(circuit, prepared, s => onStage?.(s));
@@ -95,28 +142,29 @@ async function relayed(pool: PoolId, kind: JobKind, circuit: Circuit, onStage: C
     onStage?.('save');
     await beforeSubmit?.();
     onStage?.('relay');
-    let unsure = false;
-    try {
-      await submitJob(pool, { id, kind, ...(routeId ? { routeId } : {}), ...(priced?.quote ? { feeQuoteId: priced.quote.quoteId } : {}), transaction: transaction(proof) });
-    } catch (e) {
-      // The answer was lost (slow relay, dropped connection, unconfirmed write), not necessarily the job:
-      // never resubmit a different payment; follow this job ID until the relay says what happened.
-      if (e instanceof RelayError && e.mayHaveRun) unsure = true;
-      else if (attempt < MAX_REPROVE && e instanceof RelayError && RETRYABLE.has(e.code) && e.info.retrySameId !== false) continue;
-      else if (attempt < MAX_REPROVE && e instanceof RelayError && FEE_REQUOTE.has(e.code) && pricing) {
-        // Refused before anything was signed: quote again (with the relay's own gas estimate, if it sent one) and re-prove.
-        // A job the relay recorded and then cancelled keeps its ID; the new transaction needs its own.
-        if (e.info.retrySameId === false) { if (e.info.jobMayContinue !== false || e.info.transactionHash) throw e; id = newJobId(); }
-        if (e.info.feeRequote?.rawGasUnits) gasUnits = BigInt(e.info.feeRequote.rawGasUnits);
-        priced = null;
-        continue;
+    const body = { id, kind, ...(routeId ? { routeId } : {}), ...(priced?.quote ? { feeQuoteId: priced.quote.quoteId } : {}), transaction: transaction(proof) };
+    let unsure = false, reprove = false;
+    for (let again = 0; ; again++) {
+      try { await submitJob(pool, body); break; }
+      catch (e) {
+        // The answer was lost (slow relay, dropped connection, unconfirmed write), not necessarily the job:
+        // never resubmit a different payment; follow this job ID until the relay says what happened.
+        if (!(e instanceof RelayError)) throw e;
+        if (e.mayHaveRun) { unsure = true; break; }
+        const r = recoveryOf(e);
+        // The relay kept this exact job and asks for it again later: same ID, same proof.
+        if (r === 'identical' && SAME_REQUEST_LATER.has(e.code) && again < MAX_REPROVE) { await new Promise(res => setTimeout(res, 3000)); continue; }
+        const fixable = RETRYABLE.has(e.code) || (pricing && (FEE_REQUOTE.has(e.code) || FEE_MODE_CHANGED.has(e.code)));
+        // A new proof only when the relay proved the old one will not run: unused ID kept, stopped job replaced.
+        if (!fixable || attempt >= MAX_REPROVE || (r !== 'unused' && r !== 'terminal')) throw e;
+        if (r === 'terminal') id = newJobId();
+        if (FEE_MODE_CHANGED.has(e.code)) forgetServiceFees(pool);
+        if (e.info.feeRequote?.rawGasUnits) { const hinted = BigInt(e.info.feeRequote.rawGasUnits); if (hinted > floor) floor = hinted; }
+        if (FEE_REQUOTE.has(e.code) || FEE_MODE_CHANGED.has(e.code)) priced = null;
+        reprove = true; break;
       }
-      else if (attempt < MAX_REPROVE && e instanceof RelayError && FEE_MODE_CHANGED.has(e.code) && pricing && e.info.retrySameId !== false) {
-        forgetServiceFees(pool); priced = null;
-        continue;
-      }
-      else throw e;
     }
+    if (reprove) continue;
     onSubmitted?.({ jobId: id });
     onStage?.('confirm');
     const job = await waitForJob(pool, id, { unsure });
@@ -130,11 +178,17 @@ function requireApprovedSet(state: PoolState) {
     throw new RelayError('ASP_POLICY_UNAVAILABLE');
 }
 
-/** Withdrawal to a public address, or a private send to a Lincoln receiver. Needs approved inputs. */
-export async function spend({ account, pool, amount, recipient, receiver, fee: preset, onStage, persist, onSubmitted }: Common & { amount: bigint; recipient?: string; receiver?: sdk.Receiver; fee?: PricedFee }) {
+/** `recipient` may be resolved from the final fee (a bridge or NEAR Intents deposit address quoted for exactly
+ *  `amount − fee`); it is called once, before the first proof, and the fee is then fixed. `fee` is a fee already
+ *  priced for this spend (tried first); `maxFee` the most the user approved. */
+export async function spend({ account, pool, amount, recipient, receiver, fee: hint, maxFee, onStage, persist, onSubmitted }: Common & {
+  amount: bigint; recipient?: string | ((fee: bigint) => Promise<string>); receiver?: sdk.Receiver; fee?: PricedFee; maxFee?: bigint }) {
   const info = POOLS[pool];
-  // The relay checks the fee to the unit: prove exactly its schedule's fee, or the quote it just gave.
-  const pricing: Pricing = receiver ? { kind: 'private-transfer', gross: 0n, preset } : { kind: 'withdrawal', gross: amount, preset };
+  // A recipient does not change the transaction's shape, so a resolver's address is settled with a stand-in.
+  let to = typeof recipient === 'function' ? info.relayer : recipient;
+  const lock = typeof recipient === 'function' ? async (fee: bigint) => { to = await recipient(fee); } : undefined;
+  // The relay checks the fee to the unit, so prove exactly its schedule's fee, or the quote it just gave.
+  const pricing: Pricing = receiver ? { kind: 'private-transfer', gross: 0n, hint, maxFee } : { kind: 'withdrawal', gross: amount, hint, maxFee, lock };
   return relayed(pool, 'transact', 'joinsplit', onStage, onSubmitted, (state, fee) => {
     requireApprovedSet(state);
     if (fee >= amount && !receiver) throw new Error('Amount is too small to cover the relayer fee.');
@@ -147,7 +201,7 @@ export async function spend({ account, pool, amount, recipient, receiver, fee: p
       // A private send's fee is its only public output and pays the relayer, so nothing goes to a
       // recipient; the relay still requires a non-zero one whenever there is a public output, so a
       // fee-paying send names the relayer (the same for every send: nothing to link).
-      externalData: { recipient: receiver ? (fee > 0n ? info.relayer : ZERO) : recipient ?? ZERO, feeRecipient: fee > 0n ? info.relayer : ZERO, processor: info.relayer, publicIn: 0n, publicOut: receiver ? fee : amount, fee },
+      externalData: { recipient: receiver ? (fee > 0n ? info.relayer : ZERO) : to ?? ZERO, feeRecipient: fee > 0n ? info.relayer : ZERO, processor: info.relayer, publicIn: 0n, publicOut: receiver ? fee : amount, fee },
     });
     return {
       prepared, transaction: proof => sdk.publicTransaction(prepared, proof),

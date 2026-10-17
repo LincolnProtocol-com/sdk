@@ -25,7 +25,7 @@ export type FeeQuoteKind = 'withdrawal' | 'private-transfer' | 'holder-exit';
 export interface FeeQuote {
   schema: string; quoteId: string; kind: FeeQuoteKind; grossAmount: string; outputCount: number;
   percentageServiceFee: string; fixedServiceFee: string; quotedGasFee: string; totalFee: string; netRecipientAmount: string | null;
-  gasUnits: string; gasPriceWei: string; gasCostWei: string; issuedAt: string; expiresAt: string; pool?: string; processor?: string;
+  rawGasUnits?: string; gasUnits: string; gasPriceWei: string; gasCostWei: string; issuedAt: string; expiresAt: string; pool?: string; processor?: string;
 }
 
 const MESSAGES: Record<string, string> = {
@@ -68,10 +68,12 @@ const MESSAGES: Record<string, string> = {
   SERVICE_FEE_EXCEEDS_OUTPUT: 'Amount is too small to cover the relayer fee.',
   SWAP_BELOW_MINIMUM_ECONOMIC_AMOUNT: 'This swap is too small to cover its network gas. Swap a larger amount.',
   FEE_CHANGED: 'The network fee changed while preparing. Nothing was sent; try again.',
+  FEE_ABOVE_LIMIT: 'The relayer fee rose above what was approved. Nothing was sent; get a new quote.',
+  FEE_SHAPE_UNSETTLED: 'The fee and this transaction’s change kept moving each other. Nothing was sent; try a slightly different amount.',
   RELAY_NOT_LIVE: 'Private sends, withdrawals and swaps open as soon as the relay goes live. Deposits work now, and a deposit can always be returned to the address that made it.',
 };
 /** Recovery fields the relay attaches to errors (docs/FRONTEND_FEEDBACK_20261016.md in the backend). */
-export interface RelayErrorInfo { errorId?: string; jobPersisted?: boolean | null; jobMayContinue?: boolean; retrySameId?: boolean; jobStatus?: string; transactionHash?: string;
+export interface RelayErrorInfo { errorId?: string; jobPersisted?: boolean | null; jobMayContinue?: boolean; retrySameId?: boolean; jobStatus?: string; recovery?: string; transactionHash?: string;
   /** FEE_QUOTE_COST_EXCEEDED: the relay's own estimate, to pass as gasUnits in a fresh quote. */
   feeRequote?: { rawGasUnits: string; gasPriceWei: string } }
 export class RelayError extends Error {
@@ -103,8 +105,8 @@ async function callOnce<T>(pool: PoolId, path: string, body?: unknown): Promise<
   const json = await res.json().catch(() => null);
   if (!res.ok || !json || json.error) {
     const code = typeof json?.error === 'string' ? json.error : json?.error?.code ?? `HTTP_${res.status}`;
-    const { errorId, jobPersisted, jobMayContinue, retrySameId, jobStatus, transactionHash, feeRequote } = json ?? {};
-    throw new RelayError(code, { errorId, jobPersisted, jobMayContinue, retrySameId, jobStatus, transactionHash, feeRequote });
+    const { errorId, jobPersisted, jobMayContinue, retrySameId, jobStatus, recovery, transactionHash, feeRequote } = json ?? {};
+    throw new RelayError(code, { errorId, jobPersisted, jobMayContinue, retrySameId, jobStatus, recovery, transactionHash, feeRequote });
   }
   return json as T;
 }
