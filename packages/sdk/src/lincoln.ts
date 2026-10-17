@@ -232,7 +232,7 @@ export class Lincoln {
     const quotes = (await Promise.all(routes.map(r => getQuote(pool.id, r.id, raw, slippageBps).catch(() => null)))).filter((q): q is RelayQuote => !!q);
     const best = quotes.sort((a, b) => (BigInt(b.amountOut) > BigInt(a.amountOut) ? 1 : -1))[0];
     if (!best) throw new LincolnError('QUOTE_UNAVAILABLE', 'No quote right now. Try again shortly.');
-    const caps = await poolCaps(target.id).catch(() => { throw new LincolnError('CAPS_UNAVAILABLE', `Couldn’t read the ${target.symbol} pool’s deposit limits.`); });
+    const caps = await poolCaps(target.id).catch(() => { throw new LincolnError('CAPS_UNAVAILABLE', `Couldn’t read the ${target.symbol} pool’s deposit limits from the chain (a read error, not a closed pool). Try again shortly.`); });
     // The output enters the target pool like a deposit; its limits are in target tokens. Refuse here, before
     // a proof, and say the largest input that fits (an oversized swap would revert after paying gas).
     const check = swapCapCheck(caps, raw, BigInt(best.amountOut));
@@ -250,7 +250,7 @@ export class Lincoln {
   /** Public deposit from the agent's own wallet (visible on chain: funding address and amount). */
   async quoteDeposit({ asset, amount }: { asset: string; amount: string }): Promise<QuoteRecord> {
     const pool = findPool(asset), raw = parseAmount(amount, pool);
-    const caps = await poolCaps(pool.id).catch(() => { throw new LincolnError('CAPS_UNAVAILABLE', `Couldn’t read the ${pool.symbol} pool’s deposit limits.`); });
+    const caps = await poolCaps(pool.id).catch(() => { throw new LincolnError('CAPS_UNAVAILABLE', `Couldn’t read the ${pool.symbol} pool’s deposit limits from the chain (a read error, not a closed pool). Try again shortly.`); });
     const capped = capError(caps, raw, pool.symbol, v => fmt(v, pool.decimals));
     if (capped) throw new LincolnError(caps?.paused ? 'DEPOSITS_PAUSED' : 'CAP_EXCEEDED', capped);
     return this.finishQuote({ action: 'deposit', asset: pool.symbol, pool: pool.id, decimals: pool.decimals, amount: fmt(raw, pool.decimals), amountRaw: String(raw),
