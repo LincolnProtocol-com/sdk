@@ -222,7 +222,7 @@ export class Lincoln {
       notes: ['Amount, sender and recipient stay hidden on chain.', ...(fee > 0n ? [`The fee is paid on top of the amount.`] : [])] }, pool, raw, to);
   }
 
-  /** Withdrawal to a 0x address on Robinhood Chain, or on Base, Arbitrum, Ethereum or Optimism via Relay. */
+  /** Withdrawal to a 0x address on Robinhood Chain, or on Base, Arbitrum, Ethereum, Optimism or BSC via Relay. */
   async quoteWithdraw({ asset, amount, to, chain: dest }: { asset: string; amount: string; to: string; chain?: string }): Promise<QuoteRecord> {
     const pool = findPool(asset), raw = parseAmount(amount, pool);
     if (!isAddress(to.trim())) throw new LincolnError('INVALID_RECIPIENT', 'Enter a 0x address.');
