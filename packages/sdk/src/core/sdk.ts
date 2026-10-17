@@ -637,3 +637,63 @@ export async function openAccount(envelope: Envelope, password: string): Promise
 /** Local, non-backup storage key for activity history; derived from the seed so it unlocks with the vault. */
 export const activityKey = (account: Account) => hmac(sha256, accountSeed(account), enc.encode('CHENG_WEB_ACTIVITY_V1'));
 export { gcm as aesGcm, toHex, fromHex };
+
+// ---------- Paid swap routes (port of /privacy src/phase2-fees/sdk.mjs) ----------
+// Fee adapters reuse the JoinSplit circuit with a distinct, proof-bound action envelope that also binds the
+// adapter's immutable fee (bps) and treasury, and the user's absolute fee cap. minAmountOut is the NET output.
+export const FEE_SWAP_DOMAIN = keccak256(stringToHex('LINCOLN_PHASE2_FEE_ROUTES_V1'));
+export const MAX_SERVICE_FEE_BPS = 100;
+export const FEE_ADAPTER_TYPES = ['Phase2FeeRouteAdapter', 'Phase2FeeRouter02Adapter'] as const;
+export const isFeeRoute = (route: SwapRoute) => FEE_ADAPTER_TYPES.includes(route.adapterType as typeof FEE_ADAPTER_TYPES[number]);
+export interface FeeSwapAction extends SwapAction { maxServiceFee: bigint }
+
+const feeBpsOf = (bps: unknown) => { check(Number.isSafeInteger(bps) && (bps as number) > 0 && (bps as number) <= MAX_SERVICE_FEE_BPS, 'Invalid service fee rate.'); return bps as number; };
+export const serviceFee = (gross: bigint | string, bps: number) => field(gross, MAX_VALUE) * BigInt(feeBpsOf(bps)) / 10_000n;
+export function minimumGrossOutput(minNet: bigint | string, bps: number) {
+  const net = field(minNet, MAX_VALUE, true), gross = (net - 1n) * 10_000n / BigInt(10_000 - feeBpsOf(bps)) + 1n;
+  check(gross <= MAX_VALUE, 'Gross output exceeds uint128.');
+  return gross;
+}
+export function normalizeFeeSwapRoute(options: { sourceProfile: Profile; targetProfile: Profile; route: SwapRoute }) {
+  const { route } = options;
+  check(isFeeRoute(route), 'Unsupported fee adapter.');
+  const geometry = normalizeSwapRoute(options);
+  check(route.adapterType !== 'Phase2FeeRouter02Adapter' || geometry.protocol === 0, 'Router02 adapters require Uniswap V3.');
+  const feeBps = feeBpsOf(route.feeBps), treasury = address(route.treasury as string, 'fee treasury', true);
+  check(![geometry.adapter, geometry.router, geometry.wrappedNative, geometry.factory, geometry.sourcePool, geometry.targetPool, ...geometry.tokens].includes(treasury), 'Invalid fee treasury.');
+  return { ...geometry, adapterType: route.adapterType as string, feeBps, treasury };
+}
+export function normalizeFeeSwapAction(action: { processor: string; amountIn: bigint | string; minAmountOut: bigint | string; deadline: bigint | string; targetPrecommitment: bigint | string; encryptedTemplate: string; maxServiceFee: bigint | string }): FeeSwapAction {
+  exactKeys(action, ['processor', 'amountIn', 'minAmountOut', 'deadline', 'targetPrecommitment', 'encryptedTemplate', 'maxServiceFee'], 'fee swap action');
+  const { maxServiceFee, ...base } = action;
+  return { ...normalizeSwapAction(base), maxServiceFee: field(maxServiceFee, MAX_VALUE) };
+}
+export function feeSwapActionHash({ sourceProfile, targetProfile, route, action }: { sourceProfile: Profile; targetProfile: Profile; route: SwapRoute; action: FeeSwapAction }): Hex {
+  const r = normalizeFeeSwapRoute({ sourceProfile, targetProfile, route }), a = normalizeFeeSwapAction(action);
+  return keccak256(encodeAbiParameters([
+    { type: 'bytes32' }, { type: 'uint256' }, { type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'address' },
+    { type: 'uint8' }, { type: 'bytes32' }, { type: 'uint16' }, { type: 'address' }, { type: 'address' }, { type: 'uint128' }, { type: 'uint128' },
+    { type: 'uint256' }, { type: 'uint256' }, { type: 'bytes32' }, { type: 'uint128' },
+  ], [FEE_SWAP_DOMAIN, BigInt(r.chainId), r.adapter as Hex, r.sourcePool as Hex, r.targetPool as Hex, r.router as Hex, r.wrappedNative as Hex, r.factory as Hex,
+    r.protocol, r.pathHash, r.feeBps, r.treasury as Hex, a.processor as Hex, a.amountIn, a.minAmountOut, a.deadline, a.targetPrecommitment, keccak256(a.encryptedTemplate as Hex), a.maxServiceFee]));
+}
+export const feeSwapActionEnvelope = (options: Parameters<typeof feeSwapActionHash>[0]): Hex => `${feeSwapActionHash(options)}${'00'.repeat(224)}` as Hex;
+export interface PreparedFeeSwap extends Prepared { action: FeeSwapAction; actionHash: Hex; actionEnvelope: Hex; route: ReturnType<typeof normalizeFeeSwapRoute> }
+/** A paid swap: minAmountOut is the user's NET private output after the adapter's fee; maxServiceFee caps that fee. */
+export function prepareFeeSwap({ account, sourceProfile, targetProfile, sourceState, route, action, inputs }:
+  { account: Account; sourceProfile: Profile; targetProfile: Profile; sourceState: PublicState; route: SwapRoute; action: { processor: string; amountIn: bigint; minAmountOut: bigint; deadline: bigint; maxServiceFee: bigint }; inputs?: Note[] }): PreparedFeeSwap {
+  const r = normalizeFeeSwapRoute({ sourceProfile, targetProfile, route });
+  const invoice = createDynamicReceive(account, targetProfile);
+  const a = normalizeFeeSwapAction({ ...action, targetPrecommitment: invoice.precommitment, encryptedTemplate: invoice.encryptedTemplate });
+  minimumGrossOutput(a.minAmountOut, r.feeBps);
+  const prepared = prepareJoinSplit({ account, profile: sourceProfile, state: sourceState, inputs, outputs: [], externalData: {
+    recipient: r.adapter, feeRecipient: NATIVE_ASSET, processor: r.adapter, publicIn: 0n, publicOut: a.amountIn, fee: 0n,
+  } });
+  check(prepared.outputNotes[1].commitment === 0n, 'Swap action requires the second source output to be empty.');
+  const options = { sourceProfile, targetProfile, route, action: a }, actionHash = feeSwapActionHash(options), actionEnvelope = feeSwapActionEnvelope(options);
+  prepared.encryptedOutputs[1] = actionEnvelope;
+  const context = joinSplitContext(sourceProfile, prepared.extData, prepared.encryptedOutputs, sourceState.asp);
+  prepared.inputSignals.contextBase = joinSplitContextBase(sourceProfile, prepared.extData, prepared.encryptedOutputs);
+  prepared.inputSignals.context = context; prepared.publicSignals[3] = String(context);
+  return { ...prepared, action: a, actionHash, actionEnvelope, route: r };
+}

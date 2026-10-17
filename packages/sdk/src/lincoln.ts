@@ -11,7 +11,7 @@ import * as sdk from './core/sdk.js';
 import { NET, type NetworkInfo, type NetworkName } from './core/network.js';
 import { POOLS, chain, explorerTx, findPool, publicClient, selectNetwork, type PoolInfo } from './core/pools.js';
 import { loadPoolState } from './core/state.js';
-import { RelayError, getJob, relayConfig, relayHealth, type Quote as RelayQuote } from './core/relay.js';
+import { RelayError, getJob, quoteMinOut, quoteOut, relayConfig, relayHealth, type Quote as RelayQuote } from './core/relay.js';
 import { exitFee, feePolicy, loadServiceFees, relayFee, transferFee } from './core/fees.js';
 import { deposit, getQuote, inspect, spend, swap, type OpStage } from './core/operations.js';
 import { setCircuitCache } from './core/prover.js';
@@ -229,20 +229,22 @@ export class Lincoln {
     const routes = pool.routes.filter(r => r.target === target.id);
     if (!routes.length) throw new LincolnError('NO_ROUTE', `No swap route from ${pool.symbol} to ${target.symbol}. Routes: ${pool.routes.map(r => POOLS[r.target]?.symbol).join(', ') || 'none'}.`);
     await this.ready(pool, raw);
-    const quotes = (await Promise.all(routes.map(r => getQuote(pool.id, r.id, raw, slippageBps).catch(() => null)))).filter((q): q is RelayQuote => !!q);
-    const best = quotes.sort((a, b) => (BigInt(b.amountOut) > BigInt(a.amountOut) ? 1 : -1))[0];
+    // One after another: the relay admits only a few quotes at once per pool.
+    const quotes: RelayQuote[] = [];
+    for (const r of routes) { const q = await getQuote(pool.id, r.id, raw, slippageBps).catch(() => null); if (q) quotes.push(q); }
+    const best = quotes.sort((a, b) => (quoteOut(b) > quoteOut(a) ? 1 : -1))[0];
     if (!best) throw new LincolnError('QUOTE_UNAVAILABLE', 'No quote right now. Try again shortly.');
     const caps = await poolCaps(target.id).catch(() => { throw new LincolnError('CAPS_UNAVAILABLE', `Couldn’t read the ${target.symbol} pool’s deposit limits from the chain (a read error, not a closed pool). Try again shortly.`); });
     // The output enters the target pool like a deposit; its limits are in target tokens. Refuse here, before
     // a proof, and say the largest input that fits (an oversized swap would revert after paying gas).
-    const check = swapCapCheck(caps, raw, BigInt(best.amountOut));
+    const check = swapCapCheck(caps, raw, quoteOut(best));
     if (!check.ok) throw new LincolnError(check.reason === 'paused' ? 'DEPOSITS_PAUSED' : 'CAP_EXCEEDED',
       swapCapMessage(check, target, pool, v => fmt(v, target.decimals), v => fmt(v, pool.decimals)),
       { maxOut: fmt(check.maxOut, target.decimals), maxIn: fmt(check.maxIn, pool.decimals) });
-    const swapBps = feePolicy(pool.id).swapBps;
+    const feeOut = best.netQuote ? BigInt(best.netQuote.serviceFeeAmount) : 0n;
     return this.finishQuote({ action: 'swap', asset: pool.symbol, pool: pool.id, decimals: pool.decimals, amount: fmt(raw, pool.decimals), amountRaw: String(raw),
-      receives: fmt(BigInt(best.amountOut), target.decimals), minReceives: fmt(BigInt(best.minAmountOut), target.decimals), receivesAsset: target.symbol,
-      fee: swapBps ? `${swapBps / 100}%` : '0', feeAsset: swapBps ? 'of output' : pool.symbol, toAsset: target.symbol, toPool: target.id, routeId: best.routeId, relayQuote: best,
+      receives: fmt(quoteOut(best), target.decimals), minReceives: fmt(quoteMinOut(best), target.decimals), receivesAsset: target.symbol,
+      fee: best.netQuote ? `${(best.netQuote.serviceFeeBps / 100)}% · ${fmt(feeOut, target.decimals)}` : '0', feeAsset: best.netQuote ? target.symbol : pool.symbol, toAsset: target.symbol, toPool: target.id, routeId: best.routeId, relayQuote: best,
       expiresAt: Number(best.deadline) * 1000,
       notes: [`Via ${best.protocol}, ${slippageBps / 100}% max slippage. The DEX trade is public; whose balance paid is not. The output is ready to spend in about a minute.`] }, pool, raw);
   }
@@ -310,7 +312,7 @@ export class Lincoln {
         message = status === 'success' ? `Delivered ${live.amountOutFormatted} on ${target.name}.` : `Withdrawn to the bridge; bridge status: ${status}.`;
       } else if (q.action === 'swap') {
         const fresh = await getQuote(q.pool, q.routeId!, raw, q.relayQuote!.slippageBPS);
-        if (BigInt(fresh.amountOut) < BigInt(q.relayQuote!.minAmountOut)) throw new LincolnError('QUOTE_MOVED', 'The price moved below the quoted minimum. Quote again.');
+        if (quoteOut(fresh) < quoteMinOut(q.relayQuote!)) throw new LincolnError('QUOTE_MOVED', 'The price moved below the quoted minimum. Quote again.');
         result = await swap({ account: this.account, pool: q.pool, routeId: q.routeId!, quote: fresh, onStage, persist, onSubmitted: submitted });
         message = `Swapped ${q.amount} ${q.asset} for at least ${q.minReceives} ${q.receivesAsset}, privately. It is ready to spend in about a minute.`;
       } else {

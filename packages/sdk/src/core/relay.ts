@@ -13,7 +13,12 @@ export interface RelayHealth {
   lastPublicationTimestamp?: string; minPublishIntervalSeconds?: number;
   publisher?: { status: PublisherStatus; reason: string; checkedAt: string; freshness?: { status: 'fresh' | 'stale'; ageSeconds: number } };
 }
-export interface Quote { routeId: string; protocol: string; amountIn: string; amountOut: string; minAmountOut: string; slippageBPS: number; deadline: string; blockNumber: string; gasEstimate?: string }
+export interface NetQuote { grossAmountOut: string; serviceFeeBps: number; serviceFeeAmount: string; netAmountOut: string; minNetOut: string; minGrossOut: string; maxServiceFee: string; slippageBPS: number }
+/** amountOut/minAmountOut are gross DEX output. Paid routes add netQuote: what reaches the target pool after the adapter fee. */
+export interface Quote { routeId: string; protocol: string; amountIn: string; amountOut: string; minAmountOut: string; slippageBPS: number; deadline: string; blockNumber: string; gasEstimate?: string;
+  adapterType?: string; serviceFeeBps?: number; netQuote?: NetQuote }
+export const quoteOut = (q: Quote) => BigInt(q.netQuote?.netAmountOut ?? q.amountOut);
+export const quoteMinOut = (q: Quote) => BigInt(q.netQuote?.minNetOut ?? q.minAmountOut);
 
 const MESSAGES: Record<string, string> = {
   RELAY_DISABLED: 'The relay is not signing transactions right now.',

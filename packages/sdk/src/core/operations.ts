@@ -135,10 +135,14 @@ export function swap({ account, pool, routeId, quote, onStage, persist, onSubmit
   return relayed(pool, 'swap', 'joinsplit', onStage, onSubmitted, state => {
     requireApprovedSet(state);
     if (BigInt(quote.deadline) <= BigInt(state.blockTimestamp)) throw new RelayError('EXPIRED_SWAP');
-    const prepared = sdk.prepareSwap({
-      account, sourceProfile: info.profile, targetProfile: POOLS[entry.target].profile, sourceState: state, route: entry.route,
-      action: { processor: info.relayer, amountIn: BigInt(quote.amountIn), minAmountOut: BigInt(quote.minAmountOut), deadline: BigInt(quote.deadline) },
-    });
+    const common = { account, sourceProfile: info.profile, targetProfile: POOLS[entry.target].profile, sourceState: state, route: entry.route };
+    // Paid routes bind the NET minimum and an absolute fee cap (from the quote's netQuote); legacy routes the gross minimum.
+    const prepared = sdk.isFeeRoute(entry.route)
+      ? (() => {
+        if (!quote.netQuote) throw new Error('This route needs a net quote. Get a new quote.');
+        return sdk.prepareFeeSwap({ ...common, action: { processor: info.relayer, amountIn: BigInt(quote.amountIn), minAmountOut: BigInt(quote.netQuote.minNetOut), deadline: BigInt(quote.deadline), maxServiceFee: BigInt(quote.netQuote.maxServiceFee) } });
+      })()
+      : sdk.prepareSwap({ ...common, action: { processor: info.relayer, amountIn: BigInt(quote.amountIn), minAmountOut: BigInt(quote.minAmountOut), deadline: BigInt(quote.deadline) } });
     const action = Object.fromEntries(Object.entries(prepared.action).map(([k, v]) => [k, typeof v === 'bigint' ? String(v) : v]));
     return {
       prepared, routeId, transaction: proof => ({ ...sdk.publicTransaction(prepared, proof), action }),
