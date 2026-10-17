@@ -5,9 +5,9 @@ import { erc20Abi, type Hex, type WalletClient } from 'viem';
 import * as sdk from './sdk.js';
 import { POOLS, POOL_ABI, chain, publicClient, type PoolId } from './pools.js';
 import { loadPoolState, type PoolState } from './state.js';
-import { RETRYABLE, RelayError, newJobId, relayConfig, relayQuote, submitJob, waitForJob, type JobKind, type Quote } from './relay.js';
+import { RETRYABLE, RelayError, newJobId, relayQuote, submitJob, waitForJob, type FeeQuoteKind, type JobKind, type Quote } from './relay.js';
 import { prove, type Circuit, type ProofStage } from './prover.js';
-import { exitFee, loadServiceFees, relayFee, transferFee } from './fees.js';
+import { forgetServiceFees, priceFee, quoteLive, type PricedFee } from './fees.js';
 import { minChangeFor } from './denominations.js';
 
 export type OpStage = 'sync' | 'prepare' | ProofStage | 'save' | 'sign' | 'relay' | 'confirm' | 'done';
@@ -50,30 +50,71 @@ export async function deposit({ account, pool, amount, wallet, onStage, onSubmit
 }
 
 const MAX_REPROVE = 3;
+/** What a relayed spend pays: its quote kind and gross amount. `preset` is a fee the caller already priced and
+ *  built on (a bridge quoted for exactly what arrives): a fresh quote must then charge the same, or nothing is sent. */
+interface Pricing { kind: FeeQuoteKind; gross: bigint; preset?: PricedFee }
+type Built = { prepared: { inputSignals: Record<string, unknown>; publicSignals: string[] }; transaction: (proof: unknown) => unknown; beforeSubmit?: () => void | Promise<void>; routeId?: string };
+/** Outputs the relay counts for a fee quote: non-zero JoinSplit output commitments; a holder exit has none. */
+const outputCount = (circuit: Circuit, prepared: Built['prepared']) => circuit === 'holder-exit' ? 0 : prepared.publicSignals.slice(7, 9).filter(v => BigInt(v) !== 0n).length;
+const FEE_REQUOTE = new Set(['FEE_QUOTE_EXPIRED', 'FEE_QUOTE_COST_EXCEEDED', 'FEE_QUOTE_UNKNOWN', 'FEE_QUOTE_REPLAY']);
+/** The relay switched between fixed and per-transaction gas pricing since its schedule was read. */
+const FEE_MODE_CHANGED = new Set(['FEE_QUOTE_REQUIRED', 'FEE_QUOTE_DISABLED', 'FEE_QUOTE_NOT_APPLICABLE']);
 
 async function relayed(pool: PoolId, kind: JobKind, circuit: Circuit, onStage: Common['onStage'], onSubmitted: Common['onSubmitted'],
-  build: (state: PoolState) => { prepared: { inputSignals: Record<string, unknown>; publicSignals: string[] }; transaction: (proof: unknown) => unknown; beforeSubmit?: () => void | Promise<void>; routeId?: string },
+  build: (state: PoolState, fee: bigint) => Built, pricing?: Pricing,
 ): Promise<OpResult> {
-  // A pool whose relay is not assigned yet (relayer null in its profile) takes deposits only.
+  // A pool whose relay is not configured yet (relayer null in its profile) takes deposits only.
   if (!POOLS[pool].relayer) throw new RelayError('RELAY_NOT_LIVE');
-  // One ID for the whole operation: a retry after a clear "not created" reuses it, never a new one.
-  const id = newJobId();
+  // One ID for the whole operation: a retry after a clear "not created" reuses it (retrySameId), never a new one.
+  let id = newJobId();
+  let priced: PricedFee | null = pricing?.preset ?? null, gasUnits: bigint | undefined;
+  // Dynamic quotes are single use and short lived: a fresh one whenever the last is near expiry or was refused.
+  const quote = async (outputs?: number) => {
+    const next = await priceFee(pool, pricing!.kind, pricing!.gross, { outputCount: outputs, gasUnits });
+    if (pricing!.preset && next.fee !== pricing!.preset.fee) throw new RelayError('FEE_CHANGED');
+    return next;
+  };
   for (let attempt = 0; ; attempt++) {
     onStage?.('sync');
     const state = await loadPoolState(pool);
     onStage?.('prepare');
-    const { prepared, transaction, beforeSubmit, routeId } = build(state);
+    if (pricing && !quoteLive(priced, 30_000)) priced = await quote();
+    let built = build(state, priced?.fee ?? 0n);
+    if (priced?.quote && outputCount(circuit, built.prepared) !== priced.quote.outputCount) {
+      priced = await quote(outputCount(circuit, built.prepared));
+      built = build(state, priced.fee);
+    }
+    const { prepared, transaction, beforeSubmit, routeId } = built;
     const proof = await prove(circuit, prepared, s => onStage?.(s));
+    // Proving can outlast a quote; a new one with the same fee keeps this proof, a different fee needs a new proof.
+    if (priced?.quote && !quoteLive(priced, 5_000)) {
+      const next = await quote(priced.quote.outputCount);
+      const same = next.fee === priced.fee; priced = next;
+      if (!same) { if (attempt < MAX_REPROVE) continue; throw new RelayError('FEE_CHANGED'); }
+    }
     onStage?.('save');
     await beforeSubmit?.();
     onStage?.('relay');
     let unsure = false;
     try {
-      await submitJob(pool, { id, kind, ...(routeId ? { routeId } : {}), transaction: transaction(proof) });
+      await submitJob(pool, { id, kind, ...(routeId ? { routeId } : {}), ...(priced?.quote ? { feeQuoteId: priced.quote.quoteId } : {}), transaction: transaction(proof) });
     } catch (e) {
-      // The answer was lost, not necessarily the job: never resubmit a different payment; follow this ID.
+      // The answer was lost (slow relay, dropped connection, unconfirmed write), not necessarily the job:
+      // never resubmit a different payment; follow this job ID until the relay says what happened.
       if (e instanceof RelayError && e.mayHaveRun) unsure = true;
       else if (attempt < MAX_REPROVE && e instanceof RelayError && RETRYABLE.has(e.code) && e.info.retrySameId !== false) continue;
+      else if (attempt < MAX_REPROVE && e instanceof RelayError && FEE_REQUOTE.has(e.code) && pricing) {
+        // Refused before anything was signed: quote again (with the relay's own gas estimate, if it sent one) and re-prove.
+        // A job the relay recorded and then cancelled keeps its ID; the new transaction needs its own.
+        if (e.info.retrySameId === false) { if (e.info.jobMayContinue !== false || e.info.transactionHash) throw e; id = newJobId(); }
+        if (e.info.feeRequote?.rawGasUnits) gasUnits = BigInt(e.info.feeRequote.rawGasUnits);
+        priced = null;
+        continue;
+      }
+      else if (attempt < MAX_REPROVE && e instanceof RelayError && FEE_MODE_CHANGED.has(e.code) && pricing && e.info.retrySameId !== false) {
+        forgetServiceFees(pool); priced = null;
+        continue;
+      }
       else throw e;
     }
     onSubmitted?.({ jobId: id });
@@ -90,12 +131,12 @@ function requireApprovedSet(state: PoolState) {
 }
 
 /** Withdrawal to a public address, or a private send to a Lincoln receiver. Needs approved inputs. */
-export async function spend({ account, pool, amount, recipient, receiver, onStage, persist, onSubmitted }: Common & { amount: bigint; recipient?: string; receiver?: sdk.Receiver }) {
+export async function spend({ account, pool, amount, recipient, receiver, fee: preset, onStage, persist, onSubmitted }: Common & { amount: bigint; recipient?: string; receiver?: sdk.Receiver; fee?: PricedFee }) {
   const info = POOLS[pool];
-  await loadServiceFees(pool, relayConfig);
-  return relayed(pool, 'transact', 'joinsplit', onStage, onSubmitted, state => {
+  // The relay checks the fee to the unit: prove exactly its schedule's fee, or the quote it just gave.
+  const pricing: Pricing = receiver ? { kind: 'private-transfer', gross: 0n, preset } : { kind: 'withdrawal', gross: amount, preset };
+  return relayed(pool, 'transact', 'joinsplit', onStage, onSubmitted, (state, fee) => {
     requireApprovedSet(state);
-    const fee = receiver ? transferFee(pool) : relayFee(pool, amount);
     if (fee >= amount && !receiver) throw new Error('Amount is too small to cover the relayer fee.');
     const prepared = sdk.prepareJoinSplit({
       account, profile: info.profile, state,
@@ -112,22 +153,19 @@ export async function spend({ account, pool, amount, recipient, receiver, onStag
       prepared, transaction: proof => sdk.publicTransaction(prepared, proof),
       beforeSubmit: async () => { sdk.rememberOutputs(account, info.profile, prepared); await persist?.(account); },
     };
-  });
+  }, pricing);
 }
 
 /** Public exit of one whole note (holder exit, or ragequit back to the depositing address). */
 export async function exitNote({ account, pool, note, recipient, ragequit = false, onStage, onSubmitted }: Common & { note: sdk.Note; recipient?: string; ragequit?: boolean }) {
   const info = POOLS[pool];
-  if (!ragequit) await loadServiceFees(pool, relayConfig);
-  return relayed(pool, ragequit ? 'ragequit' : 'holderExit', 'holder-exit', onStage, onSubmitted, state => {
+  // Ragequit is free and unpriced; a holder exit pays from the note it reveals.
+  return relayed(pool, ragequit ? 'ragequit' : 'holderExit', 'holder-exit', onStage, onSubmitted, (state, fee) => {
     const prepared = ragequit
       ? sdk.prepareRagequit({ account, profile: info.profile, note, state, processor: info.relayer })
-      : (() => {
-        const fee = exitFee(pool, note.value);
-        return sdk.prepareHolderExit({ account, profile: info.profile, note, state, externalData: { processor: info.relayer, recipient: recipient!, feeRecipient: fee > 0n ? info.relayer : ZERO, fee } });
-      })();
+      : sdk.prepareHolderExit({ account, profile: info.profile, note, state, externalData: { processor: info.relayer, recipient: recipient!, feeRecipient: fee > 0n ? info.relayer : ZERO, fee } });
     return { prepared, transaction: proof => sdk.publicHolderExitTransaction(prepared, proof) };
-  });
+  }, ragequit ? undefined : { kind: 'holder-exit', gross: note.value });
 }
 
 export const getQuote = (pool: PoolId, routeId: string, amountIn: bigint, slippageBPS = 100): Promise<Quote> => relayQuote(pool, routeId, amountIn, slippageBPS);

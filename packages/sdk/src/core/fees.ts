@@ -8,16 +8,31 @@
 // No serviceFees (null, the testnet today) means everything is sponsored. Ragequit proofs carry no
 // fee, so it stays free whatever the schedule says. Swap fees are taken by the route adapter and
 // shown from the quote.
-import type { PoolId } from './pools.js';
+//
+// Dynamic gas (/v3/config → feeQuotes, lincoln-relay-gas-pricing/v1): the gas part is no longer the
+// fixed gasFeeUnits but priced per operation. Every new spend gets a fresh quote from POST /v3/fees
+// before proving, proves its totalFee and submits its quoteId (priceFee). Displayed fees are estimated
+// locally from the same public model (gas models, buffer, asset price) and the chain's current base fee.
+import { POOLS, publicClient, type PoolId } from './pools.js';
+import { RelayError, relayConfig, requestFeeQuote, type FeeQuote, type FeeQuoteKind } from './relay.js';
 
 interface Part { bps: number; gas: boolean; fixed: bigint }
-export interface FeePolicy { id: string | null; gas: bigint; withdrawal: Part; holderExit: Part; privateTransfer: Part; swapBps: number; label: string }
+type PartKey = 'withdrawal' | 'holderExit' | 'privateTransfer';
+/** The relay's public gas pricing model, for local estimates. Binding fees always come from a quote. */
+export interface GasPricing {
+  available: boolean; unavailableReason: string | null; bufferBps: number; maxGasPrice: bigint;
+  models: { withdrawal: bigint[]; privateTransfer: bigint[]; holderExit: bigint };
+  /** ETH wei per base unit of the pool asset; null when the relay has no fresh price for it. */
+  price: { num: bigint; den: bigint } | null;
+}
+export interface FeePolicy { id: string | null; gas: bigint; withdrawal: Part; holderExit: Part; privateTransfer: Part; swapBps: number; label: string; known?: false; dynamic?: GasPricing }
 
 const FREE: Part = { bps: 0, gas: false, fixed: 0n };
 const SPONSORED: FeePolicy = { id: null, gas: 0n, withdrawal: FREE, holderExit: FREE, privateTransfer: FREE, swapBps: 0, label: 'Sponsored' };
 const units = (v: unknown) => { try { return v === undefined || v === null ? 0n : BigInt(v as string); } catch { return 0n; } };
 const bps = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 10_000 ? v : 0);
 const part = (p: any): Part => ({ bps: bps(p?.bps), gas: p?.includesGas === true, fixed: units(p?.fixedUnits) });
+const ceil = (n: bigint, d: bigint) => (n + d - 1n) / d;
 
 /** Parses a relay's serviceFees object (v1 or v2). Anything unrecognised is treated as sponsored. */
 export function parseServiceFees(raw: unknown): FeePolicy {
@@ -38,30 +53,106 @@ export function parseServiceFees(raw: unknown): FeePolicy {
 }
 const label = (b: number) => (b === 0 ? 'Sponsored' : `${(b / 100).toFixed(2).replace(/0$/, '')}% service fee`);
 
+/** Parses /v3/config.feeQuotes. Null (or absent) is the fixed-fee relay. */
+export function parseGasPricing(raw: unknown, asset: string): GasPricing | undefined {
+  const q = raw as any;
+  if (!q || typeof q !== 'object' || q.enabled !== true) return undefined;
+  const m = q.gasModels ?? {}, shape = (v: any) => [0, 1, 2].map(i => units(v?.[String(i)]));
+  const p = Array.isArray(q.assetPrices) ? q.assetPrices.find((x: any) => String(x?.asset).toLowerCase() === asset.toLowerCase()) : undefined;
+  const native = /^0x0{40}$/i.test(asset);
+  const fresh = p && Date.parse(p.expiresAt) > Date.now() && units(p.weiPerBaseUnitNumerator) > 0n && units(p.weiPerBaseUnitDenominator) > 0n;
+  return {
+    available: q.available !== false, unavailableReason: q.unavailableReason ?? null,
+    bufferBps: Number.isInteger(q.gasBufferBps) ? q.gasBufferBps : 2000, maxGasPrice: units(q.maxGasPriceWei),
+    models: { withdrawal: shape(m.withdrawal), privateTransfer: shape(m['private-transfer']), holderExit: units(m['holder-exit']) },
+    price: native ? { num: 1n, den: 1n } : fresh ? { num: units(p.weiPerBaseUnitNumerator), den: units(p.weiPerBaseUnitDenominator) } : null,
+  };
+}
+
 /** Per-pool policies as loaded from the relays (see loadServiceFees); missing pools are sponsored. */
 export const FEE_POLICY: Record<PoolId, FeePolicy> = {};
 export const feePolicy = (pool: PoolId) => FEE_POLICY[pool] ?? SPONSORED;
 
-const charge = (p: FeePolicy, x: Part, gross: bigint) => gross * BigInt(x.bps) / 10_000n + (x.gas ? p.gas : 0n) + x.fixed;
+/** The relay picks max(2 × base fee, base fee + 0.02 gwei), capped by its policy (backend quoteMainnetGasPrice).
+ *  Kept per chain; refreshed by loadServiceFees and by every binding quote. Null until first read. */
+let gasPriceWei: bigint | null = null, gasPriceAt = 0;
+async function refreshGasPrice() {
+  if (Date.now() - gasPriceAt < 30_000) return;
+  gasPriceAt = Date.now();
+  try {
+    const block = await publicClient.getBlock({ blockTag: 'latest' }), base = block.baseFeePerGas ?? await publicClient.getGasPrice();
+    gasPriceWei = base * 2n > base + 20_000_000n ? base * 2n : base + 20_000_000n;
+  } catch { gasPriceAt = 0; }
+}
+/** Outputs a JoinSplit from this app always has: zero-value outputs still carry a real commitment. */
+export const JOINSPLIT_OUTPUTS = 2;
 
-/** Fee the relayer takes from a public withdrawal of `amount` (paid out of it). */
-export const relayFee = (pool: PoolId, amount: bigint) => charge(feePolicy(pool), feePolicy(pool).withdrawal, amount);
+/** Estimated gas part, in the pool asset, of one operation under dynamic pricing (what a quote would say now). */
+function dynamicGas(d: GasPricing, key: PartKey, outputs = JOINSPLIT_OUTPUTS): bigint {
+  if (!d.price) return 0n;
+  const raw = key === 'holderExit' ? d.models.holderExit : d.models[key][outputs] ?? 0n;
+  const gas = ceil(raw * BigInt(10_000 + d.bufferBps), 10_000n);
+  const price = gasPriceWei === null ? d.maxGasPrice : gasPriceWei > d.maxGasPrice && d.maxGasPrice > 0n ? d.maxGasPrice : gasPriceWei;
+  return ceil(gas * price * d.price.den, d.price.num);
+}
+const gasPart = (p: FeePolicy, key: PartKey) => (!p[key].gas ? 0n : p.dynamic ? dynamicGas(p.dynamic, key) : p.gas);
+const charge = (p: FeePolicy, key: PartKey, gross: bigint) => gross * BigInt(p[key].bps) / 10_000n + gasPart(p, key) + p[key].fixed;
+
+/** Fee the relayer takes from a public withdrawal of `amount` (paid out of it). An estimate under dynamic gas. */
+export const relayFee = (pool: PoolId, amount: bigint) => charge(feePolicy(pool), 'withdrawal', amount);
 /** Fee for a relayed holder exit of a note worth `value`. */
-export const exitFee = (pool: PoolId, value: bigint) => charge(feePolicy(pool), feePolicy(pool).holderExit, value);
+export const exitFee = (pool: PoolId, value: bigint) => charge(feePolicy(pool), 'holderExit', value);
 /** Fee for a private transfer (paid from the sender's notes on top of the amount). */
-export const transferFee = (pool: PoolId) => charge(feePolicy(pool), feePolicy(pool).privateTransfer, 0n);
+export const transferFee = (pool: PoolId) => charge(feePolicy(pool), 'privateTransfer', 0n);
 
-export interface FeeBreakdown { amount: bigint; fee: bigint; receives: bigint; policy: FeePolicy }
+export interface FeeBreakdown { amount: bigint; fee: bigint; service: bigint; gas: bigint; receives: bigint; policy: FeePolicy; estimated: boolean }
 export function feeBreakdown(pool: PoolId, amount: bigint): FeeBreakdown {
-  const fee = relayFee(pool, amount);
-  return { amount, fee, receives: amount > fee ? amount - fee : 0n, policy: feePolicy(pool) };
+  const policy = feePolicy(pool), fee = relayFee(pool, amount), gas = gasPart(policy, 'withdrawal');
+  return { amount, fee, service: fee - gas, gas, receives: amount > fee ? amount - fee : 0n, policy, estimated: !!policy.dynamic };
 }
 
-const loading = new Map<PoolId, Promise<FeePolicy>>();
-/** Loads (once per pool, retried after a failure) the relay's fee schedule into FEE_POLICY. */
-export function loadServiceFees(pool: PoolId, fetchConfig: (pool: PoolId) => Promise<{ serviceFees?: unknown }>): Promise<FeePolicy> {
-  if (!loading.has(pool)) {
-    loading.set(pool, fetchConfig(pool).then(c => (FEE_POLICY[pool] = parseServiceFees(c.serviceFees)), e => { loading.delete(pool); throw e; }));
+const loading = new Map<PoolId, { at: number; promise: Promise<FeePolicy> }>();
+/** Loads the relay's fee schedule into FEE_POLICY: once per pool (for a minute under dynamic pricing, whose
+ *  asset prices and availability change), retried after a failure. */
+export function loadServiceFees(pool: PoolId, fetchConfig: (pool: PoolId) => Promise<{ serviceFees?: unknown; feeQuotes?: unknown }> = relayConfig): Promise<FeePolicy> {
+  const cached = loading.get(pool);
+  if (!cached || (FEE_POLICY[pool]?.dynamic && Date.now() - cached.at > 60_000)) {
+    const promise = fetchConfig(pool).then(async c => {
+      const policy = parseServiceFees(c.serviceFees), dynamic = parseGasPricing(c.feeQuotes, POOLS[pool]?.asset ?? '');
+      if (dynamic) { policy.dynamic = dynamic; await refreshGasPrice(); }
+      return (FEE_POLICY[pool] = policy);
+    }, e => { loading.delete(pool); throw e; });
+    loading.set(pool, { at: Date.now(), promise });
   }
-  return loading.get(pool)!;
+  return loading.get(pool)!.promise;
 }
+
+/** Drops a pool's loaded schedule, so the next read asks the relay again (it switched pricing modes under us). */
+export function forgetServiceFees(pool: PoolId) { loading.delete(pool); delete FEE_POLICY[pool]; }
+
+/** A fee ready to prove: the quote it came from (dynamic pricing), or null under a fixed schedule. */
+export interface PricedFee { fee: bigint; quote: FeeQuote | null }
+const PART: Record<FeeQuoteKind, PartKey> = { withdrawal: 'withdrawal', 'private-transfer': 'privateTransfer', 'holder-exit': 'holderExit' };
+
+/** The exact fee for one new spend. Under dynamic pricing this asks the relay for a fresh, single-use quote
+ *  (it expires in about two minutes and binds to one job); otherwise it is the fixed schedule's fee. */
+export async function priceFee(pool: PoolId, kind: FeeQuoteKind, gross: bigint, { outputCount, gasUnits }: { outputCount?: number; gasUnits?: bigint } = {}): Promise<PricedFee> {
+  const policy = await loadServiceFees(pool);
+  const outputs = outputCount ?? (kind === 'holder-exit' ? 0 : JOINSPLIT_OUTPUTS);
+  if (!policy.dynamic) return { fee: kind === 'private-transfer' ? charge(policy, PART[kind], 0n) : charge(policy, PART[kind], gross), quote: null };
+  if (!policy.dynamic.available) throw new RelayError(policy.dynamic.unavailableReason ?? 'FEE_QUOTES_UNAVAILABLE');
+  const grossAmount = kind === 'private-transfer' ? 0n : gross;
+  // A larger raw estimate (after FEE_QUOTE_COST_EXCEEDED) never goes below the model the relay requires.
+  const model = kind === 'holder-exit' ? policy.dynamic.models.holderExit : policy.dynamic.models[PART[kind] as 'withdrawal'][outputs] ?? 0n;
+  const q = await requestFeeQuote(pool, { kind, grossAmount, outputCount: outputs, ...(gasUnits !== undefined && gasUnits > model ? { gasUnits } : {}) });
+  const info = POOLS[pool], fee = units(q.totalFee);
+  // The quote binds pool, processor and shape; a mismatching answer is never proved.
+  if (q.kind !== kind || q.outputCount !== outputs || q.grossAmount !== String(grossAmount) || !/^[0-9a-f]{64}$/.test(q.quoteId)
+    || (q.pool && q.pool.toLowerCase() !== info.profile.pool.address.toLowerCase()) || (q.processor && q.processor.toLowerCase() !== info.relayer.toLowerCase())
+    ) throw new RelayError('FEE_QUOTE_BINDING_MISMATCH');
+  if (kind !== 'private-transfer' && fee >= gross) throw new RelayError('SERVICE_FEE_EXCEEDS_OUTPUT');
+  if (q.gasPriceWei) { gasPriceWei = units(q.gasPriceWei); gasPriceAt = Date.now(); }
+  return { fee, quote: q };
+}
+/** Whether a quote still has `marginMs` left before it expires. */
+export const quoteLive = (p: PricedFee | null, marginMs = 10_000) => !!p && (!p.quote || Date.parse(p.quote.expiresAt) - Date.now() > marginMs);

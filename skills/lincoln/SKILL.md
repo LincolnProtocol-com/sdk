@@ -16,7 +16,7 @@ You control a private balance in Lincoln, a privacy pool on Robinhood Chain. You
 
 ## Rules
 
-- **Quote first, always.** Every send, swap or withdrawal starts with `lincoln quote …`. Show the user the amount, the fees and the minimum received, then spend with that `quoteId` (`lincoln execute <quoteId>`, or the matching `lincoln_send` / `lincoln_swap` / `lincoln_withdraw` tool). Never spend from a quote you have not shown.
+- **Quote first, always.** Every send, swap or withdrawal starts with `lincoln quote …`. Show the user the amount, the fees and the minimum received, then spend with that `quoteId` (`lincoln execute <quoteId>`, or the matching `lincoln_send` / `lincoln_swap` / `lincoln_withdraw` tool). Never spend from a quote you have not shown. When the quote notes that the gas part is an estimate, say so: the relay prices gas per transaction, and execute stops with `QUOTE_MOVED` if the fee rises more than a quarter over the quote.
 - **Stay inside the policy.** If an action exceeds a per-transaction or daily limit, or a recipient is not on the allowlist, don't split it into smaller pieces to get around the limit. Tell the user and stop.
 - **Ask before large or irreversible moves.** Confirm with the user before any withdrawal to a new address. A spend above the approval threshold fails with `APPROVAL_REQUIRED`: ask the user, and only after they agree run it again with `--approve` (CLI) or `userApproved: true` (MCP).
 - **Ready vs waiting.** New funds wait about a minute before they can be spent privately. If the balance is waiting, say when it will be ready instead of retrying in a loop.

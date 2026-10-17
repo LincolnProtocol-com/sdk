@@ -20,6 +20,14 @@ export interface Quote { routeId: string; protocol: string; amountIn: string; am
 export const quoteOut = (q: Quote) => BigInt(q.netQuote?.netAmountOut ?? q.amountOut);
 export const quoteMinOut = (q: Quote) => BigInt(q.netQuote?.minNetOut ?? q.minAmountOut);
 
+export type FeeQuoteKind = 'withdrawal' | 'private-transfer' | 'holder-exit';
+/** A dynamic relay fee offer (lincoln-service-fee-quote/v3): single use, bound to one job ID and transaction once submitted. */
+export interface FeeQuote {
+  schema: string; quoteId: string; kind: FeeQuoteKind; grossAmount: string; outputCount: number;
+  percentageServiceFee: string; fixedServiceFee: string; quotedGasFee: string; totalFee: string; netRecipientAmount: string | null;
+  gasUnits: string; gasPriceWei: string; gasCostWei: string; issuedAt: string; expiresAt: string; pool?: string; processor?: string;
+}
+
 const MESSAGES: Record<string, string> = {
   RELAY_DISABLED: 'The relay is not signing transactions right now.',
   ASP_POLICY_UNAVAILABLE: 'No association set is usable right now (expired or paused), so private sends and withdrawals pause. Public exit still works.',
@@ -44,10 +52,28 @@ const MESSAGES: Record<string, string> = {
   RPC_UNAVAILABLE: 'The relay lost its connection to the chain for a moment. Try again shortly.',
   REQUEST_REJECTED: 'The relay could not complete that right now. Try again in a moment.',
   RATE_LIMITED: 'Too many requests from this network. Wait a minute and try again.',
+  FEE_QUOTE_REQUIRED: 'The relay now prices gas per transaction. Update the Lincoln SDK to a version that requests fee quotes.',
+  FEE_QUOTE_EXPIRED: 'The fee quote expired before it was used. Nothing was sent; try again.',
+  FEE_QUOTE_COST_EXCEEDED: 'Network gas rose above the quoted fee. Nothing was sent; try again for a new quote.',
+  FEE_QUOTE_REPLAY: 'That fee quote was already used. Nothing was sent; try again.',
+  FEE_QUOTE_UNKNOWN: 'The relay no longer knows that fee quote. Nothing was sent; try again.',
+  FEE_QUOTE_CAPACITY: 'The relay is handing out too many fee quotes right now. Try again in a minute.',
+  FEE_QUOTE_GAS_LIMIT: 'This transaction needs more gas than the relay allows.',
+  FEE_QUOTE_BINDING_MISMATCH: 'The relay’s fee quote did not match this transaction. Nothing was sent; try again.',
+  FEE_QUOTE_FEE_MISMATCH: 'The fee in this transaction did not match its quote. Nothing was sent; try again.',
+  FEE_QUOTE_SHAPE_MISMATCH: 'The fee quote did not match this transaction. Nothing was sent; try again.',
+  FEE_QUOTES_UNAVAILABLE: 'The relay can’t price gas right now, so private sends and withdrawals pause for a moment. Public exit still works.',
+  GAS_ASSET_PRICE_MISSING: 'The relay has no price for this token yet, so it can’t charge gas in it. Private sends and withdrawals of it pause; public exit still works.',
+  GAS_ASSET_PRICE_STALE: 'The relay’s price for this token is out of date, so private sends and withdrawals of it pause for a moment. Public exit still works.',
+  SERVICE_FEE_EXCEEDS_OUTPUT: 'Amount is too small to cover the relayer fee.',
+  SWAP_BELOW_MINIMUM_ECONOMIC_AMOUNT: 'This swap is too small to cover its network gas. Swap a larger amount.',
+  FEE_CHANGED: 'The network fee changed while preparing. Nothing was sent; try again.',
   RELAY_NOT_LIVE: 'Private sends, withdrawals and swaps open as soon as the relay goes live. Deposits work now, and a deposit can always be returned to the address that made it.',
 };
 /** Recovery fields the relay attaches to errors (docs/FRONTEND_FEEDBACK_20261016.md in the backend). */
-export interface RelayErrorInfo { errorId?: string; jobPersisted?: boolean | null; jobMayContinue?: boolean; retrySameId?: boolean; transactionHash?: string }
+export interface RelayErrorInfo { errorId?: string; jobPersisted?: boolean | null; jobMayContinue?: boolean; retrySameId?: boolean; jobStatus?: string; transactionHash?: string;
+  /** FEE_QUOTE_COST_EXCEEDED: the relay's own estimate, to pass as gasUnits in a fresh quote. */
+  feeRequote?: { rawGasUnits: string; gasPriceWei: string } }
 export class RelayError extends Error {
   constructor(public code: string, public info: RelayErrorInfo = {}) {
     super((MESSAGES[code] ?? (/^HTTP_5/.test(code) ? MESSAGES.RELAY_UNREACHABLE : `Relay rejected the request (${code}).`)) + (info.errorId ? ` (ref ${info.errorId})` : ''));
@@ -77,15 +103,18 @@ async function callOnce<T>(pool: PoolId, path: string, body?: unknown): Promise<
   const json = await res.json().catch(() => null);
   if (!res.ok || !json || json.error) {
     const code = typeof json?.error === 'string' ? json.error : json?.error?.code ?? `HTTP_${res.status}`;
-    const { errorId, jobPersisted, jobMayContinue, retrySameId, transactionHash } = json ?? {};
-    throw new RelayError(code, { errorId, jobPersisted, jobMayContinue, retrySameId, transactionHash });
+    const { errorId, jobPersisted, jobMayContinue, retrySameId, jobStatus, transactionHash, feeRequote } = json ?? {};
+    throw new RelayError(code, { errorId, jobPersisted, jobMayContinue, retrySameId, jobStatus, transactionHash, feeRequote });
   }
   return json as T;
 }
 
 export const relayHealth = (pool: PoolId) => call<RelayHealth>(pool, '/readyz');
 export const relayState = (pool: PoolId) => call<any>(pool, '/v3/state');
-export const relayConfig = (pool: PoolId) => call<{ processor: string | null; relaySigning: boolean; serviceFees?: unknown }>(pool, '/v3/config');
+export const relayConfig = (pool: PoolId) => call<{ processor: string | null; relaySigning: boolean; serviceFees?: unknown; feeQuotes?: unknown }>(pool, '/v3/config');
+/** A fresh dynamic fee quote (only on relays whose /v3/config advertises feeQuotes). Not retried: each answer is a new offer. */
+export const requestFeeQuote = (pool: PoolId, r: { kind: FeeQuoteKind; grossAmount: bigint; outputCount: number; gasUnits?: bigint }) =>
+  call<FeeQuote>(pool, '/v3/fees', { schema: 'lincoln-fee-request/v3', kind: r.kind, grossAmount: String(r.grossAmount), outputCount: r.outputCount, ...(r.gasUnits !== undefined ? { gasUnits: String(r.gasUnits) } : {}) });
 /** Quotes back off and retry while the relay's quote slots are full (QUOTE_BUSY, at most 4 in flight). */
 export async function relayQuote(pool: PoolId, routeId: string, amountIn: bigint, slippageBPS: number): Promise<Quote> {
   for (let attempt = 0; ; attempt++) {
@@ -95,7 +124,7 @@ export async function relayQuote(pool: PoolId, routeId: string, amountIn: bigint
 }
 
 export const newJobId = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(18)))).replace(/\+/g, '-').replace(/\//g, '_');
-export const submitJob = (pool: PoolId, job: { id: string; kind: JobKind; routeId?: string; transaction: unknown }) => call<RelayJob>(pool, '/v3/jobs', job);
+export const submitJob = (pool: PoolId, job: { id: string; kind: JobKind; routeId?: string; feeQuoteId?: string; transaction: unknown }) => call<RelayJob>(pool, '/v3/jobs', job);
 export const getJob = (pool: PoolId, id: string) => call<RelayJob>(pool, `/v3/jobs/${id}`);
 
 /** Polls a submitted job until it settles. Network hiccups keep polling: the job ID is the source of truth.
