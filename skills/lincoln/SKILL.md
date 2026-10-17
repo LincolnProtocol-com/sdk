@@ -1,6 +1,6 @@
 ---
 name: lincoln
-description: Use the agent's private Lincoln balance on Robinhood Chain — check balances, quote, send privately to lincoln3 addresses, swap between ETH, USDG and tokenized stocks inside the pool, and withdraw to Robinhood Chain, Base, Arbitrum, Ethereum, Optimism, BSC, Zcash, Bitcoin, Solana or Tron. Use when the user asks the agent to pay, trade, rebalance or move funds privately, or asks what it holds.
+description: Use the agent's private Lincoln balance on Robinhood Chain — check balances, quote, send privately to lincoln3 addresses, swap between ETH, USDG and tokenized stocks inside the pool, and withdraw to Robinhood Chain, Base, Arbitrum, Ethereum, Optimism, BSC, Solana, Zcash, Bitcoin or Tron. Use when the user asks the agent to pay, trade, rebalance or move funds privately, or asks what it holds.
 ---
 
 # Lincoln private balance

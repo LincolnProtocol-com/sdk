@@ -11,7 +11,7 @@ const NATIVE = '0x0000000000000000000000000000000000000000';
 /** Robinhood Chain mainnet: quotes always use it, so testnet can preview live prices. */
 const ORIGIN_CHAIN = 4663;
 const USDG = '0x5fc5360d0400a0fd4f2af552add042d716f1d168';
-/** Destination chain by id or name ("base", "arbitrum", "ethereum", "optimism", "bsc"/"bnb"). */
+/** Destination chain by id or name ("base", "arbitrum", "ethereum", "optimism", "bsc"/"bnb", "solana"). */
 export const findChain = (name: string | number) => {
   const key = String(name).toLowerCase().replace(/\s+/g, '');
   return DEST_CHAINS.find(c => c.id === Number(name) || c.name.toLowerCase() === key || c.aliases?.includes(key));
@@ -20,17 +20,24 @@ export const bridgeLive = () => !NET.testnet;
 
 /** What arrives on a destination chain: `native` is what ETH becomes, `stable` what USDG becomes. */
 export interface DestCurrency { address: string; symbol: string; decimals: number }
-export interface DestChain { id: number; name: string; explorer: string; native: DestCurrency; stable: DestCurrency; aliases?: string[] }
+/** How a non-EVM chain's addresses look (`hint`, shape check); EVM chains take a 0x address. */
+export interface ForeignAddress { hint: string; looksValid: (a: string) => boolean }
+export interface DestChain { id: number; name: string; explorer: string; native: DestCurrency; stable: DestCurrency; aliases?: string[]; address?: ForeignAddress }
 const ETH: DestCurrency = { address: NATIVE, symbol: 'ETH', decimals: 18 };
 const usdc = (address: string): DestCurrency => ({ address, symbol: 'USDC', decimals: 6 });
 export const DEST_CHAINS: DestChain[] = [
   { id: 8453, name: 'Base', explorer: 'https://basescan.org', native: ETH, stable: usdc('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') },
   { id: 42161, name: 'Arbitrum', explorer: 'https://arbiscan.io', native: ETH, stable: usdc('0xaf88d065e77c8cC2239327C5EDb3A432268e5831') },
-  { id: 1, name: 'Ethereum', explorer: 'https://etherscan.io', native: ETH, stable: usdc('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48') },
+  // Paxos issues USDG on Ethereum and Solana too, so there it stays USDG.
+  { id: 1, name: 'Ethereum', explorer: 'https://etherscan.io', native: ETH, stable: { address: '0xe343167631d89B6Ffc58B88d6b7fB0228795491D', symbol: 'USDG', decimals: 6 } },
   { id: 10, name: 'Optimism', explorer: 'https://optimistic.etherscan.io', native: ETH, stable: usdc('0x0b2C639c533813f4Aa9D7837Caf62653d097Ff85') },
   // BNB Smart Chain has no native ETH: ETH arrives as BNB and USDG as USDT (18 decimals on BSC).
   { id: 56, name: 'BSC', explorer: 'https://bscscan.com', aliases: ['bnb', 'bnbchain', 'bnbsmartchain', 'binance'],
     native: { address: NATIVE, symbol: 'BNB', decimals: 18 }, stable: { address: '0x55d398326f99059fF775485246999027B3197955', symbol: 'USDT', decimals: 18 } },
+  // Relay's id for Solana. ETH arrives as SOL; needs a Robinhood Chain refund address, since the recipient isn't 0x.
+  { id: 792703809, name: 'Solana', explorer: 'https://solscan.io', aliases: ['sol'],
+    native: { address: '11111111111111111111111111111111', symbol: 'SOL', decimals: 9 }, stable: { address: '2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH', symbol: 'USDG', decimals: 6 },
+    address: { hint: 'a Solana address', looksValid: a => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a) } },
 ];
 
 /** What a pool's asset becomes on the destination chain (ETH → the chain's `native`, USDG → its `stable`). Stocks can't bridge. */

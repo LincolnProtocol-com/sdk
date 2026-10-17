@@ -226,13 +226,16 @@ export class Lincoln {
   }
 
   /** Withdrawal to a 0x address on Robinhood Chain, or on Base, Arbitrum, Ethereum, Optimism or BSC via Relay, or to
-   *  Zcash, Bitcoin, Solana or Tron via NEAR Intents (those need `refund`, a Robinhood Chain address used only if the swap fails). */
+   *  Solana via Relay, or to Zcash, Bitcoin or Tron via NEAR Intents (non-0x chains need `refund`, a Robinhood Chain address used only if the swap fails). */
   async quoteWithdraw({ asset, amount, to, chain: dest, refund }: { asset: string; amount: string; to: string; chain?: string; refund?: string }): Promise<QuoteRecord> {
     const pool = findPool(asset), raw = parseAmount(amount, pool);
     const intent = dest ? findIntentChain(dest) : undefined;
-    if (intent) {
-      if (!intent.looksValid(to.trim())) throw new LincolnError('INVALID_RECIPIENT', `Enter a ${intent.name} address (${intent.hint}).`);
-      if (!refund || !isAddress(refund.trim())) throw new LincolnError('REFUND_REQUIRED', `Withdrawals to ${intent.name} need a refund address on Robinhood Chain (--refund 0x…), used only if the swap fails. Use a fresh one.`);
+    // Chains without 0x addresses (the intents chains, Solana through Relay) need a Robinhood Chain refund address.
+    const relayDest = dest && !intent ? findChain(dest) : undefined;
+    const foreign = intent ? { name: intent.name, hint: intent.hint, looksValid: intent.looksValid } : relayDest?.address ? { name: relayDest.name, ...relayDest.address } : undefined;
+    if (foreign) {
+      if (!foreign.looksValid(to.trim())) throw new LincolnError('INVALID_RECIPIENT', `Enter a ${foreign.name} address (${foreign.hint}).`);
+      if (!refund || !isAddress(refund.trim())) throw new LincolnError('REFUND_REQUIRED', `Withdrawals to ${foreign.name} need a refund address on Robinhood Chain (--refund 0x…), used only if the bridge or swap fails. Use a fresh one.`);
     } else if (!isAddress(to.trim())) throw new LincolnError('INVALID_RECIPIENT', 'Enter a 0x address.');
     if (refund && !isAddress(refund.trim())) throw new LincolnError('INVALID_REFUND', 'The refund address must be a 0x address on Robinhood Chain.');
     await loadServiceFees(pool.id, relayConfig);

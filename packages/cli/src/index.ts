@@ -33,7 +33,7 @@ Options
   --approve                   the user approved this spend (above the policy's approval threshold)
   --to <chain>                withdraw to ${supportedChains().join(', ')}
   --refund <0x…>              Robinhood Chain address a failed bridge or swap refunds to
-                              (required for zcash, bitcoin, solana and tron; use a fresh one)
+                              (required for solana, zcash, bitcoin and tron; use a fresh one)
 
 Environment
   LINCOLN_PASSPHRASE          encrypts the agent key at init and unlocks it later (required on mainnet;

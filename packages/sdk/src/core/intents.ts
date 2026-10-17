@@ -1,4 +1,4 @@
-// Withdraw to non-EVM chains (Zcash, Bitcoin, Solana, Tron) through NEAR Intents (1Click API), the same routes
+// Withdraw to non-EVM chains (Zcash, Bitcoin, Tron) through NEAR Intents (1Click API), the same routes
 // as the web app's Bridge tab (privacy-frontend src/protocol/intents.ts). The private balance is withdrawn by
 // our relay to a one-time 1Click deposit address on Robinhood Chain, so the agent's wallet never appears; a
 // solver pays out on the destination chain. Requests go through the Lincoln app's /intents proxy, so 1Click
@@ -22,9 +22,6 @@ export const INTENT_CHAINS: IntentChain[] = [
     looksValid: a => new RegExp(`^t[13][${BASE58}]{33}$`).test(a) || /^u1[02-9ac-hj-np-z]{100,}$/.test(a) },
   { name: 'Bitcoin', aliases: ['btc'], native: BTC, stable: BTC, hint: 'bc1…, 1… or 3…',
     looksValid: a => /^bc1[02-9ac-hj-np-z]{11,71}$/.test(a) || new RegExp(`^[13][${BASE58}]{25,34}$`).test(a) },
-  { name: 'Solana', aliases: ['sol'], native: { assetId: 'nep141:sol.omft.near', symbol: 'SOL', decimals: 9 },
-    stable: { assetId: 'nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near', symbol: 'USDC', decimals: 6 },
-    hint: 'a Solana address', looksValid: a => new RegExp(`^[${BASE58}]{32,44}$`).test(a) },
   { name: 'Tron', aliases: ['trx'], native: { assetId: 'nep141:tron.omft.near', symbol: 'TRX', decimals: 6 },
     stable: { assetId: 'nep141:tron-d28a265909efecdcee7c5028585214ea0b96f015.omft.near', symbol: 'USDT', decimals: 6 },
     hint: 'T…', looksValid: a => new RegExp(`^T[${BASE58}]{33}$`).test(a) },

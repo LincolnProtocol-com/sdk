@@ -46,14 +46,14 @@ server.registerTool('lincoln_status', { title: 'Job status', description: 'Curre
 
 server.registerTool('lincoln_quote', {
   title: 'Quote a spend',
-  description: `Quote a send (private, to lincoln3:), swap (inside the pool), withdraw (chain: ${supportedChains().join(', ')}; a 0x address, or a Zcash/Bitcoin/Solana/Tron address with a Robinhood Chain refund address) or deposit (public, from the agent wallet). Returns a quoteId, fees, what is received and whether the policy allows it. Show this to the user before spending.`,
+  description: `Quote a send (private, to lincoln3:), swap (inside the pool), withdraw (chain: ${supportedChains().join(', ')}; a 0x address, or a Solana/Zcash/Bitcoin/Tron address with a Robinhood Chain refund address) or deposit (public, from the agent wallet). Returns a quoteId, fees, what is received and whether the policy allows it. Show this to the user before spending.`,
   inputSchema: {
     action: z.enum(['send', 'swap', 'withdraw', 'deposit']),
     amount: z.string().describe('Decimal amount of the asset being spent, e.g. "25" or "0.1"'),
     asset: z.string().describe('Asset spent: ETH, USDG, NVDA… (for swap, the asset you pay with)'),
     to: z.string().optional().describe('send: lincoln3: address · withdraw: recipient address on the destination chain · swap: asset to receive'),
     chain: z.string().optional().describe('withdraw only: destination chain, default robinhood'),
-    refund: z.string().optional().describe('withdraw only: Robinhood Chain 0x address a failed bridge or swap refunds to; required for zcash, bitcoin, solana and tron'),
+    refund: z.string().optional().describe('withdraw only: Robinhood Chain 0x address a failed bridge or swap refunds to; required for solana, zcash, bitcoin and tron'),
   },
   annotations: read,
 }, ({ action, amount, asset, to, chain, refund }) => run(async l => {
