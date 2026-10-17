@@ -135,8 +135,11 @@ export class Lincoln {
   /** Ready (spendable now) and waiting balances per asset. */
   async balances(): Promise<Balance[]> {
     const health = await relayHealth('eth').catch(() => null);
-    const next = health?.lastPublicationTimestamp && health.minPublishIntervalSeconds
-      ? new Date((Number(health.lastPublicationTimestamp) + health.minPublishIntervalSeconds) * 1000).toISOString() : undefined;
+    // The provider publishes a new set once new deposits exist, at most every interval: if the earliest
+    // next round is already past, the next one comes about an interval from now.
+    const interval = health?.minPublishIntervalSeconds, now = Date.now() / 1000;
+    const next = health?.lastPublicationTimestamp && interval
+      ? new Date(Math.max(Number(health.lastPublicationTimestamp) + interval, now + interval) * 1000).toISOString() : undefined;
     return Promise.all(Object.values(POOLS).map(async p => {
       try {
         const h = inspect(this.account, p.id, await loadPoolState(p.id));

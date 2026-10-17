@@ -1,5 +1,5 @@
 // Pinned pools of the selected network, their relays and swap routes (see network.ts).
-import { createPublicClient, defineChain, http, type Abi, type Chain, type Hex, type PublicClient } from 'viem';
+import { createPublicClient, defineChain, fallback, http, type Abi, type Chain, type Hex, type PublicClient } from 'viem';
 import poolAbi from '../abi/Phase2ASPPool.json' with { type: 'json' };
 import registryAbi from '../abi/Phase2ASPRegistry.json' with { type: 'json' };
 import { NETWORKS, setNet, type AssetKind, type NetworkInfo, type NetworkName } from './network.js';
@@ -35,7 +35,10 @@ export function selectNetwork(name: NetworkName, { rpc, app }: NetworkOptions = 
     id: net.id, name: net.label, nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
     rpcUrls: { default: { http: [net.rpc] } }, blockExplorers: { default: { name: 'Explorer', url: net.explorer } }, testnet: net.testnet,
   });
-  publicClient = createPublicClient({ chain, transport: http(net.rpc) }) as PublicClient;
+  // Mainnet reads default to the Lincoln app's /rpc proxy (a dedicated node, this machine's IP hidden
+  // from the provider), with the public endpoint as fallback. A custom rpc is used as is.
+  const transport = !rpc && !net.testnet ? fallback([http(`${net.app}/rpc`), http(base.rpc)]) : http(net.rpc);
+  publicClient = createPublicClient({ chain, transport }) as PublicClient;
   explorerTx = (hash: string) => `${net.explorer}/tx/${hash}`;
 
   for (const k of Object.keys(POOLS)) delete POOLS[k];
