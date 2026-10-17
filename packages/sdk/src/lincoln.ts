@@ -19,7 +19,7 @@ import { createKey, keysFromSignature, readKeyFile, signMessageFor, unlockKey, w
 import { decodeReceiver, encodeReceivers } from './core/receiver-code.js';
 import { checkPolicy, readPolicy, writeDefaultPolicy, type Policy } from './core/policy.js';
 import { usdPrice } from './core/prices.js';
-import { poolCaps, capError } from './core/caps.js';
+import { poolCaps, capError, swapCapCheck, swapCapMessage } from './core/caps.js';
 import { BRIDGE_DONE, bridgeLive, bridgeRoute, bridgeStatus, findChain, nudgeBridge, quoteBridge, DEST_CHAINS } from './core/bridge.js';
 import type { PrivateKeyAccount } from 'viem/accounts';
 
@@ -62,6 +62,7 @@ export interface ExecResult { quoteId: string; action: Action; jobId?: string; t
 interface ActivityRow { at: string; quoteId: string; action: Action; pool: string; asset: string; amount: string; usd: number | null; jobId?: string; txHash?: string; status: 'submitted' | 'confirmed' | 'failed'; error?: string }
 
 const QUOTE_TTL_MS = 10 * 60_000;
+const ROUND_TIP = 'Standard amounts (e.g. 0.1 ETH, 100 USDG, 1 NVDA) blend in; an unusual amount can be matched to a deposit. Split into standard amounts with private sends to yourself, and withdraw them at different times.';
 const fmt = (v: bigint, decimals: number) => {
   const s = formatUnits(v, decimals);
   const [i, f = ''] = s.split('.');
@@ -210,7 +211,7 @@ export class Lincoln {
     const robinhoodChain = !dest || ['robinhood', 'hood', String(this.net.id)].includes(dest.toLowerCase());
     if (robinhoodChain) {
       return this.finishQuote({ ...base, receives: fmt(raw - fee, pool.decimals), receivesAsset: pool.symbol,
-        notes: ['The recipient and amount become public; which deposit paid for it stays hidden.'] }, pool, raw, to);
+        notes: ['The recipient and amount become public; which deposit paid for it stays hidden.', ROUND_TIP] }, pool, raw, to);
     }
     const target = findChain(dest!);
     if (!target) throw new LincolnError('UNKNOWN_CHAIN', `Unknown chain "${dest}". Use robinhood, ${DEST_CHAINS.map(c => c.name.toLowerCase()).join(', ')}.`);
@@ -232,8 +233,12 @@ export class Lincoln {
     const best = quotes.sort((a, b) => (BigInt(b.amountOut) > BigInt(a.amountOut) ? 1 : -1))[0];
     if (!best) throw new LincolnError('QUOTE_UNAVAILABLE', 'No quote right now. Try again shortly.');
     const caps = await poolCaps(target.id).catch(() => { throw new LincolnError('CAPS_UNAVAILABLE', `Couldn’t read the ${target.symbol} pool’s deposit limits.`); });
-    const capped = capError(caps, BigInt(best.amountOut), target.symbol, v => fmt(v, target.decimals));
-    if (capped) throw new LincolnError(caps?.paused ? 'DEPOSITS_PAUSED' : 'CAP_EXCEEDED', capped);
+    // The output enters the target pool like a deposit; its limits are in target tokens. Refuse here, before
+    // a proof, and say the largest input that fits (an oversized swap would revert after paying gas).
+    const check = swapCapCheck(caps, raw, BigInt(best.amountOut));
+    if (!check.ok) throw new LincolnError(check.reason === 'paused' ? 'DEPOSITS_PAUSED' : 'CAP_EXCEEDED',
+      swapCapMessage(check, target, pool, v => fmt(v, target.decimals), v => fmt(v, pool.decimals)),
+      { maxOut: fmt(check.maxOut, target.decimals), maxIn: fmt(check.maxIn, pool.decimals) });
     const swapBps = feePolicy(pool.id).swapBps;
     return this.finishQuote({ action: 'swap', asset: pool.symbol, pool: pool.id, decimals: pool.decimals, amount: fmt(raw, pool.decimals), amountRaw: String(raw),
       receives: fmt(BigInt(best.amountOut), target.decimals), minReceives: fmt(BigInt(best.minAmountOut), target.decimals), receivesAsset: target.symbol,

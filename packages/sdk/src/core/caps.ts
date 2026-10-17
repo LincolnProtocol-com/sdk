@@ -42,6 +42,26 @@ export function poolCaps(pool: PoolId): Promise<PoolCaps | null> {
   return value;
 }
 
+/** A swap's output enters the target pool like a deposit, so its limits apply to the output, in the target
+ *  asset's own units (stock tokens, not dollars). The fill can beat the quote, so 1% of headroom is kept:
+ *  an output over the limit reverts the whole swap after the proof and gas are spent. */
+export type SwapCapCheck = { ok: true } | { ok: false; reason: 'paused' | 'deposit' | 'total'; maxOut: bigint; maxIn: bigint };
+export function swapCapCheck(caps: PoolCaps | null, amountIn: bigint, amountOut: bigint): SwapCapCheck {
+  if (!caps) return { ok: true };
+  if (caps.paused) return { ok: false, reason: 'paused', maxOut: 0n, maxIn: 0n };
+  const limit = caps.maxDeposit < caps.room ? caps.maxDeposit : caps.room;
+  const maxOut = limit * 99n / 100n;
+  if (amountOut <= maxOut) return { ok: true };
+  return { ok: false, reason: caps.maxDeposit < caps.room ? 'deposit' : 'total', maxOut, maxIn: amountOut > 0n ? amountIn * maxOut / amountOut : 0n };
+}
+/** "At most 11.4 NVDA per swap right now (≈ 2,446 USDG)." */
+export function swapCapMessage(check: Extract<SwapCapCheck, { ok: false }>, target: { symbol: string }, source: { symbol: string }, fmtOut: (v: bigint) => string, fmtIn: (v: bigint) => string): string {
+  if (check.reason === 'paused') return `New ${target.symbol} deposits are paused for now, so swaps into ${target.symbol} wait too.`;
+  if (check.maxOut === 0n) return `The ${target.symbol} pool is full for now.`;
+  const what = check.reason === 'deposit' ? 'per swap' : 'more fits in the pool';
+  return `At most ${fmtOut(check.maxOut)} ${target.symbol} ${what} right now (≈ ${fmtIn(check.maxIn)} ${source.symbol}).`;
+}
+
 /** Why a deposit of `amount` would be refused by the contract, or null if it fits. */
 export function capError(caps: PoolCaps | null, amount: bigint, symbol: string, format: (v: bigint) => string): string | null {
   if (!caps) return null;
