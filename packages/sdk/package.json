@@ -1,13 +1,20 @@
 {
   "name": "@lincolnprotocol/sdk",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "description": "Private balances on Robinhood Chain for agents and apps: Lincoln privacy pool SDK for Node.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "exports": { ".": "./dist/index.js" },
-  "files": ["dist"],
-  "engines": { "node": ">=20" },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@noble/ciphers": "1.3.0",
     "@noble/curves": "2.4.0",
