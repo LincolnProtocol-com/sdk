@@ -26,7 +26,7 @@ Usage
   lincoln status <jobId>
 
 Options
-  --network testnet|mainnet   default $LINCOLN_NETWORK or testnet
+  --network mainnet|testnet   default $LINCOLN_NETWORK or mainnet
   --home <dir>                wallet directory, default $LINCOLN_HOME or ~/.lincoln
   --json                      machine-readable output
   --yes                       skip the confirmation prompt (spends that need approval still need --approve)

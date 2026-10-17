@@ -20,6 +20,16 @@
         "internalType": "address",
         "name": "asset",
         "type": "address"
+      },
+      {
+        "internalType": "uint128",
+        "name": "initialMaxDeposit",
+        "type": "uint128"
+      },
+      {
+        "internalType": "uint128",
+        "name": "initialMaxTotal",
+        "type": "uint128"
       }
     ],
     "stateMutability": "nonpayable",
@@ -59,7 +69,22 @@
   },
   {
     "inputs": [],
+    "name": "CapIncreaseNotReady",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "ContextMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "DepositCapExceeded",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "DepositsArePaused",
     "type": "error"
   },
   {
@@ -85,6 +110,11 @@
   {
     "inputs": [],
     "name": "InvalidAsset",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidCaps",
     "type": "error"
   },
   {
@@ -139,6 +169,11 @@
   },
   {
     "inputs": [],
+    "name": "PoolCapExceeded",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "PublicFundingRequiresDynamicDeposit",
     "type": "error"
   },
@@ -165,7 +200,17 @@
   },
   {
     "inputs": [],
+    "name": "UnauthorizedGuardian",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "UnavailableASPPolicy",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "UnavailableCapProposal",
     "type": "error"
   },
   {
@@ -177,6 +222,69 @@
     "inputs": [],
     "name": "UnsupportedChainId",
     "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [],
+    "name": "CapIncreaseCancelled",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint128",
+        "name": "maxDeposit",
+        "type": "uint128"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint128",
+        "name": "maxTotal",
+        "type": "uint128"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "eta",
+        "type": "uint64"
+      }
+    ],
+    "name": "CapIncreaseProposed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint128",
+        "name": "maxDeposit",
+        "type": "uint128"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint128",
+        "name": "maxTotal",
+        "type": "uint128"
+      }
+    ],
+    "name": "CapsUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "paused",
+        "type": "bool"
+      }
+    ],
+    "name": "DepositsPaused",
+    "type": "event"
   },
   {
     "anonymous": false,
@@ -441,6 +549,19 @@
   },
   {
     "inputs": [],
+    "name": "CAP_INCREASE_DELAY",
+    "outputs": [
+      {
+        "internalType": "uint64",
+        "name": "",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "CIPHERTEXT_BYTES",
     "outputs": [
       {
@@ -557,6 +678,26 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "acceptCapIncrease",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "accountedBalance",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "components": [
@@ -610,6 +751,13 @@
       }
     ],
     "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "cancelCapIncrease",
+    "outputs": [],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -687,6 +835,19 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "depositsPaused",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "uint256",
@@ -751,6 +912,67 @@
       }
     ],
     "name": "hashContext",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "recipient",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "feeRecipient",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "processor",
+            "type": "address"
+          },
+          {
+            "internalType": "uint128",
+            "name": "publicIn",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "publicOut",
+            "type": "uint128"
+          },
+          {
+            "internalType": "uint128",
+            "name": "fee",
+            "type": "uint128"
+          }
+        ],
+        "internalType": "struct Phase2ASPPool.ExtData",
+        "name": "data",
+        "type": "tuple"
+      },
+      {
+        "internalType": "bytes[2]",
+        "name": "encryptedOutputs",
+        "type": "bytes[2]"
+      },
+      {
+        "internalType": "uint64",
+        "name": "epoch",
+        "type": "uint64"
+      }
+    ],
+    "name": "hashContextForEpoch",
     "outputs": [
       {
         "internalType": "uint256",
@@ -885,6 +1107,32 @@
   },
   {
     "inputs": [],
+    "name": "maxDeposit",
+    "outputs": [
+      {
+        "internalType": "uint128",
+        "name": "",
+        "type": "uint128"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "maxTotal",
+    "outputs": [
+      {
+        "internalType": "uint128",
+        "name": "",
+        "type": "uint128"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "nextLeafIndex",
     "outputs": [
       {
@@ -913,6 +1161,54 @@
       }
     ],
     "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "pauseDeposits",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "pendingCaps",
+    "outputs": [
+      {
+        "internalType": "uint128",
+        "name": "maxDeposit",
+        "type": "uint128"
+      },
+      {
+        "internalType": "uint128",
+        "name": "maxTotal",
+        "type": "uint128"
+      },
+      {
+        "internalType": "uint64",
+        "name": "eta",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint128",
+        "name": "depositCap",
+        "type": "uint128"
+      },
+      {
+        "internalType": "uint128",
+        "name": "totalCap",
+        "type": "uint128"
+      }
+    ],
+    "name": "proposeCapIncrease",
+    "outputs": [],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -994,6 +1290,24 @@
       }
     ],
     "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint128",
+        "name": "depositCap",
+        "type": "uint128"
+      },
+      {
+        "internalType": "uint128",
+        "name": "totalCap",
+        "type": "uint128"
+      }
+    ],
+    "name": "setCaps",
+    "outputs": [],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -1083,6 +1397,13 @@
     "name": "transact",
     "outputs": [],
     "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "unpauseDeposits",
+    "outputs": [],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {

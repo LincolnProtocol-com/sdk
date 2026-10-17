@@ -1,0 +1,167 @@
+{
+  "schema": "phase2-asp-production-profile/v1",
+  "releaseCandidate": true,
+  "experimental": false,
+  "testOnly": false,
+  "productionReady": false,
+  "chain": {
+    "id": 4663,
+    "rpcUrl": "https://rpc.mainnet.chain.robinhood.com/"
+  },
+  "genesisHash": "0xaad15f3d702aaea00caf3e9bb56395efe9127bc3b31b24921abf1eee3409305c",
+  "artifactSHA256": "26ccf2f48a1ec45673091e2c4276c8e4d657da59cdbc3a7585fcd2358c45f747",
+  "sourceSetSHA256": "a96ec2aa126e34aaafc7479d23552acd08df911370fd2fcd6615e75e86ff3ba0",
+  "production": {
+    "build": {
+      "path": "artifacts/phase2-mainnet/contracts.json",
+      "sha256": "26ccf2f48a1ec45673091e2c4276c8e4d657da59cdbc3a7585fcd2358c45f747"
+    },
+    "manifests": {
+      "joinsplit": {
+        "path": "protocol/phase2-mainnet/build/joinsplit/manifest.json",
+        "sha256": "ff7dd97461c7190b13808add36cc73254f0c1b1c9b3bb03cceb39d3019bd59b0"
+      },
+      "holder-exit": {
+        "path": "protocol/phase2-mainnet/build/holder-exit/manifest.json",
+        "sha256": "b80c9987281b10a20697511b31716bd2c1fd6c0b08887ad6c7af4cb8f64b0cba"
+      }
+    },
+    "parameters": {
+      "joinsplit": {
+        "r1cs": {
+          "path": "protocol/phase2-mainnet/build/joinsplit/main.r1cs",
+          "sha256": "f5e6448b8c432cd28027f9b6f09f3ae1721c0648caf1a54b1368caced6bc5f2d"
+        },
+        "wasm": {
+          "path": "protocol/phase2-mainnet/build/joinsplit/main_js/main.wasm",
+          "sha256": "54dd12b723c5a3da1b3bae05b554404aa13b3cbaedbbd07f08a26957a6294fdf"
+        },
+        "zkey": {
+          "path": "protocol/phase2-mainnet/build/joinsplit/final.zkey",
+          "sha256": "36a228e5cf8b81e6930bcb42b82fb60bbfa2fe7e7039d450b1e49e2fa31059ed"
+        },
+        "vkey": {
+          "path": "protocol/phase2-mainnet/build/joinsplit/verification_key.json",
+          "sha256": "3d56acc68775b4a7db3ddb35c36e0ac815cf8ad3c53987c8d209da534f34e92e"
+        },
+        "verifier": {
+          "path": "protocol/phase2-mainnet/generated/Phase2ASPJoinSplitVerifier.sol",
+          "sha256": "c1216ccf994f092ba4f458d03cea67e58525052e51a4f1209a163981a168af82"
+        },
+        "ceremonyTranscript": {
+          "path": "protocol/phase2-mainnet/build/joinsplit/ceremony-transcript.json",
+          "sha256": "0530ed030192273662f4896e9ca7e9192fd5522d5304254128168732c32d6018"
+        }
+      },
+      "holder-exit": {
+        "r1cs": {
+          "path": "protocol/phase2-mainnet/build/holder-exit/main.r1cs",
+          "sha256": "899c9e5e9feb4db2184cd14a0d0f44b0a552abc706879a238e4bf67df8d4f87b"
+        },
+        "wasm": {
+          "path": "protocol/phase2-mainnet/build/holder-exit/main_js/main.wasm",
+          "sha256": "fb570f26df068248b980b0460bb13ce5fc886462201206fcdafea26e6901ae3f"
+        },
+        "zkey": {
+          "path": "protocol/phase2-mainnet/build/holder-exit/final.zkey",
+          "sha256": "d17b8e06b15c48b97dc4dc18a1d0a89014fbc4d807c222792edda7f271d500d3"
+        },
+        "vkey": {
+          "path": "protocol/phase2-mainnet/build/holder-exit/verification_key.json",
+          "sha256": "82a79ea566d549a9035782e93cec60f3c2a826e46e6cb36b49f0f6b29d3725ea"
+        },
+        "verifier": {
+          "path": "protocol/phase2-mainnet/generated/Phase2ASPExitVerifier.sol",
+          "sha256": "7123a28975858cc41888c681e29f5ed08e5b334280bc982c25e0a46c09adca51"
+        },
+        "ceremonyTranscript": {
+          "path": "protocol/phase2-mainnet/build/holder-exit/ceremony-transcript.json",
+          "sha256": "fe66974588fe0f9131c0f3a8826bdc201bcb5f5492781e108c6f50aed26f917d"
+        }
+      }
+    },
+    "releaseId": "26ccf2f48a1ec45673091e2c4276c8e4d657da59cdbc3a7585fcd2358c45f747"
+  },
+  "deployment": {
+    "planId": "c662a8d26bc4b08f4f9a46b7e74b73ae0552afce4738d3be0511d24250b9f32e",
+    "extension": "stock-100-tokens",
+    "corePlanId": "c7a32c89a72648ffa2405b20b2e7bd5cc53c80c30ad6649f07518e975e9c88cd"
+  },
+  "circuitManifests": {
+    "joinsplit": "ff7dd97461c7190b13808add36cc73254f0c1b1c9b3bb03cceb39d3019bd59b0",
+    "holder-exit": "b80c9987281b10a20697511b31716bd2c1fd6c0b08887ad6c7af4cb8f64b0cba"
+  },
+  "asset": {
+    "symbol": "TSLA",
+    "decimals": 18
+  },
+  "pool": {
+    "address": "0xE8c619705B7452c2281cA8fA675a355846D34BFE",
+    "runtimeCodeHash": "0x3708966d29ec3eb96a4b865293ffaf31cfb1efa5293e0d177fce19eaeb72237a",
+    "startBlock": "90703190",
+    "blockHash": "0xb019d5df5611074b7f95fcf0f956bc5ec7c9c8c19e094bfa7e07db86d53d9002",
+    "asset": "0x322F0929c4625eD5bAd873c95208D54E1c003b2d",
+    "noteModel": "factorized-asp-v1",
+    "scope": "5669121943912854292475616653267998736664969131360050566165442672521309895423",
+    "treeDepth": 20
+  },
+  "verifier": {
+    "address": "0xA5bC542708D7fEBD706E7fD78caD2ACa785B9dF4",
+    "runtimeCodeHash": "0x53b6c748afbdf537440036d238752a874e918bb8128aa11d2df65926b271fb4a",
+    "startBlock": "90674412",
+    "blockHash": "0x8478f8726e9abeb771e7d269b34adc34ffc92822efc954f2e3e5d655f1ede473"
+  },
+  "exitVerifier": {
+    "address": "0xF430E5d1aa6d970de10C745DC04cb7e7E1F53Ab5",
+    "runtimeCodeHash": "0x25611eb4723ceab2d49339495042c2899d45e04de6fd503c5d07efe7f9015a60",
+    "startBlock": "90696074",
+    "blockHash": "0xa472b6878db7c335becbb3cbcf9ed9088bb998137eeda51a27079dba1dd645d1"
+  },
+  "registry": {
+    "address": "0x89ad7Cce6c161A21323BE234d9924fEe915b2660",
+    "runtimeCodeHash": "0x063c89335f4b6aa87b57c02e6ab7914e0e77b369412d9beac33977a518fc0dbd",
+    "startBlock": "90696101",
+    "blockHash": "0x86a8809d1f29b67d4bb9066c09d6f9381db1ea3d07f7a0b90b86b926967e72f8",
+    "provider": "0xce6770154D793dF78FbfA0D3615B2946366E6612",
+    "guardian": "0x9CF17a6E3c75D200f58283A165C442a8A3994555"
+  },
+  "libraries": {
+    "PoseidonT3": {
+      "address": "0x4781B6D29Dd0CeFEf101049E23f31D2165a553fa",
+      "runtimeCodeHash": "0xcef6c31a694ac3823f4f66a8b44bc2f1547e21a01146eaa5dd28f078f39a22eb",
+      "startBlock": "90619701",
+      "blockHash": "0xaad47aaa9e1bd401f586d11bfc6ec858501e566a73ed3ff1568bbb5364f458ce"
+    },
+    "PoseidonT4": {
+      "address": "0x9096D809dc96BCeE1F9c7b64BAd8F79FA6dCF165",
+      "runtimeCodeHash": "0xf6553d07b5e1e362c4faf3b73c34109ac2cc201be0d0925917f2db0a19b3df43",
+      "startBlock": "90662073",
+      "blockHash": "0x0eef880fa9db457a46aab7ceed32fd1063b4bc0d627b1a6a01e3015bbec7730b"
+    }
+  },
+  "relayer": null,
+  "audit": {
+    "status": "deferred",
+    "blocking": false,
+    "independentReviewCompleted": false
+  },
+  "policy": {
+    "mode": "asp",
+    "providerKind": "self-hosted",
+    "bootstrapPolicy": "all-current-notes",
+    "sourceScreening": false
+  },
+  "limitations": [
+    "Release candidate; independent audit is deferred.",
+    "Current-note approval does not screen original-deposit provenance.",
+    "External DEX operations and public deposits/exits expose amounts and timing.",
+    "Stock pools are deployed separately; DEX routes and asset-specific end-to-end acceptance are pending."
+  ],
+  "depositCaps": {
+    "schema": "lincoln-pool-deposit-caps/v1",
+    "unit": "asset-base-units",
+    "status": "configured",
+    "maxDepositUnits": "7000000000000000000",
+    "maxTotalUnits": "100000000000000000000"
+  }
+}

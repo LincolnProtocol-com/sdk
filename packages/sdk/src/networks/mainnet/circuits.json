@@ -1,0 +1,38 @@
+{
+  "joinsplit": {
+    "manifestSHA256": "ff7dd97461c7190b13808add36cc73254f0c1b1c9b3bb03cceb39d3019bd59b0",
+    "wasm": {
+      "path": "/circuits/asp-mainnet/joinsplit.wasm",
+      "bytes": 2559210,
+      "sha256": "54dd12b723c5a3da1b3bae05b554404aa13b3cbaedbbd07f08a26957a6294fdf"
+    },
+    "zkey": {
+      "path": "/circuits/asp-mainnet/joinsplit.final.zkey",
+      "bytes": 14169690,
+      "sha256": "36a228e5cf8b81e6930bcb42b82fb60bbfa2fe7e7039d450b1e49e2fa31059ed"
+    },
+    "vkey": {
+      "path": "/circuits/asp-mainnet/joinsplit.vkey.json",
+      "bytes": 4721,
+      "sha256": "3d56acc68775b4a7db3ddb35c36e0ac815cf8ad3c53987c8d209da534f34e92e"
+    }
+  },
+  "holder-exit": {
+    "manifestSHA256": "b80c9987281b10a20697511b31716bd2c1fd6c0b08887ad6c7af4cb8f64b0cba",
+    "wasm": {
+      "path": "/circuits/asp-mainnet/holder-exit.wasm",
+      "bytes": 2384051,
+      "sha256": "fb570f26df068248b980b0460bb13ce5fc886462201206fcdafea26e6901ae3f"
+    },
+    "zkey": {
+      "path": "/circuits/asp-mainnet/holder-exit.final.zkey",
+      "bytes": 799334,
+      "sha256": "d17b8e06b15c48b97dc4dc18a1d0a89014fbc4d807c222792edda7f271d500d3"
+    },
+    "vkey": {
+      "path": "/circuits/asp-mainnet/holder-exit.vkey.json",
+      "bytes": 3939,
+      "sha256": "82a79ea566d549a9035782e93cec60f3c2a826e46e6cb36b49f0f6b29d3725ea"
+    }
+  }
+}

@@ -90,7 +90,7 @@ export class Lincoln {
 
   /** Creates the agent wallet for a network (and a default policy if there is none). */
   static async init(opts: OpenOptions = {}) {
-    const network = opts.network ?? 'testnet', home = opts.home ?? defaultHome(), files = paths(home, network);
+    const network = opts.network ?? (process.env.LINCOLN_NETWORK as NetworkName | undefined) ?? 'mainnet', home = opts.home ?? defaultHome(), files = paths(home, network);
     const net = selectNetwork(network, opts);
     const passphrase = opts.passphrase ?? process.env.LINCOLN_PASSPHRASE;
     const kf = await createKey(files.key, net.id, passphrase || undefined);
@@ -100,7 +100,7 @@ export class Lincoln {
   }
 
   static async open(opts: OpenOptions = {}): Promise<Lincoln> {
-    const network = opts.network ?? (process.env.LINCOLN_NETWORK as NetworkName | undefined) ?? 'testnet';
+    const network = opts.network ?? (process.env.LINCOLN_NETWORK as NetworkName | undefined) ?? 'mainnet';
     const home = opts.home ?? defaultHome(), files = paths(home, network);
     const net = selectNetwork(network, { rpc: opts.rpc ?? process.env.LINCOLN_RPC, app: opts.app ?? process.env.LINCOLN_APP });
     setCircuitCache(files.circuits);

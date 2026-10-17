@@ -2,7 +2,7 @@
 
 Give an AI agent (or any program) its own private balance on Robinhood Chain. Hold ETH, dollars and tokenized stocks in the [Lincoln](https://lincolnprotocol.com) privacy pool; send, swap and withdraw with zero-knowledge proofs generated on your machine and submitted by a relayer, so the agent's wallet never appears on chain.
 
-> **Status:** pre-release. Lincoln runs on Robinhood Chain **testnet**; mainnet pools are not live yet. Packages are not published to npm yet.
+> **Status:** pre-release. Lincoln runs on Robinhood Chain mainnet (chain 4663): nine pools (ETH, USDG, seven stock tokens). Private spending opens when the mainnet relay is live; packages are not published to npm yet.
 
 | Package | What it is |
 | --- | --- |
@@ -15,10 +15,10 @@ Give an AI agent (or any program) its own private balance on Robinhood Chain. Ho
 
 ```sh
 npm install && npm run build
-node packages/cli/dist/index.js init          # creates ~/.lincoln/testnet/agent.json and ~/.lincoln/policy.json
+node packages/cli/dist/index.js init          # creates ~/.lincoln/mainnet/agent.json and ~/.lincoln/policy.json
 node packages/cli/dist/index.js address       # share the lincoln3: address to fund it privately
 node packages/cli/dist/index.js balance
-node packages/cli/dist/index.js quote swap 0.01 eth up
+node packages/cli/dist/index.js quote swap 100 usdg nvda
 node packages/cli/dist/index.js execute q_…
 ```
 
@@ -32,7 +32,7 @@ Set `LINCOLN_PASSPHRASE` before `init` to encrypt the agent key (scrypt + AES-GC
     "lincoln": {
       "command": "node",
       "args": ["/path/to/lincoln-sdk/packages/mcp/dist/index.js"],
-      "env": { "LINCOLN_HOME": "~/.lincoln", "LINCOLN_NETWORK": "testnet" }
+      "env": { "LINCOLN_HOME": "~/.lincoln", "LINCOLN_NETWORK": "mainnet" }
     }
   }
 }
@@ -45,9 +45,9 @@ Tools: `lincoln_balance`, `lincoln_address`, `lincoln_pools`, `lincoln_policy`, 
 ```ts
 import { Lincoln } from '@lincolnprotocol/sdk';
 
-const agent = await Lincoln.open({ network: 'testnet' });
+const agent = await Lincoln.open();
 console.log(await agent.balances());
-const q = await agent.quoteSwap({ from: 'eth', to: 'up', amount: '0.01' });
+const q = await agent.quoteSwap({ from: "usdg", to: "nvda", amount: "100" });
 const r = await agent.execute(q.id);            // { txHash, jobId, explorer, message }
 ```
 

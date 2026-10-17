@@ -53,6 +53,8 @@ const MAX_REPROVE = 3;
 async function relayed(pool: PoolId, kind: JobKind, circuit: Circuit, onStage: Common['onStage'], onSubmitted: Common['onSubmitted'],
   build: (state: PoolState) => { prepared: { inputSignals: Record<string, unknown>; publicSignals: string[] }; transaction: (proof: unknown) => unknown; beforeSubmit?: () => void | Promise<void>; routeId?: string },
 ): Promise<OpResult> {
+  // A pool whose relay is not assigned yet (relayer null in its profile) takes deposits only.
+  if (!POOLS[pool].relayer) throw new RelayError('RELAY_NOT_LIVE');
   // One ID for the whole operation: a retry after a clear "not created" reuses it, never a new one.
   const id = newJobId();
   for (let attempt = 0; ; attempt++) {

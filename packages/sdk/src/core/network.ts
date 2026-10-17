@@ -7,6 +7,25 @@ import tokenBProfile from '../networks/testnet/profile.tokenB.json' with { type:
 import ethRoutes from '../networks/testnet/routes.eth.json' with { type: 'json' };
 import tokenBRoutes from '../networks/testnet/routes.tokenB.json' with { type: 'json' };
 import testnetCircuits from '../networks/testnet/circuits.json' with { type: 'json' };
+import m_ethProfile from '../networks/mainnet/profile.eth.json' with { type: 'json' };
+import m_ethRoutes from '../networks/mainnet/routes.eth.json' with { type: 'json' };
+import m_usdgProfile from '../networks/mainnet/profile.usdg.json' with { type: 'json' };
+import m_usdgRoutes from '../networks/mainnet/routes.usdg.json' with { type: 'json' };
+import m_nvdaProfile from '../networks/mainnet/profile.nvda.json' with { type: 'json' };
+import m_nvdaRoutes from '../networks/mainnet/routes.nvda.json' with { type: 'json' };
+import m_spyProfile from '../networks/mainnet/profile.spy.json' with { type: 'json' };
+import m_spyRoutes from '../networks/mainnet/routes.spy.json' with { type: 'json' };
+import m_metaProfile from '../networks/mainnet/profile.meta.json' with { type: 'json' };
+import m_metaRoutes from '../networks/mainnet/routes.meta.json' with { type: 'json' };
+import m_tslaProfile from '../networks/mainnet/profile.tsla.json' with { type: 'json' };
+import m_tslaRoutes from '../networks/mainnet/routes.tsla.json' with { type: 'json' };
+import m_googlProfile from '../networks/mainnet/profile.googl.json' with { type: 'json' };
+import m_googlRoutes from '../networks/mainnet/routes.googl.json' with { type: 'json' };
+import m_qqqProfile from '../networks/mainnet/profile.qqq.json' with { type: 'json' };
+import m_qqqRoutes from '../networks/mainnet/routes.qqq.json' with { type: 'json' };
+import m_mstrProfile from '../networks/mainnet/profile.mstr.json' with { type: 'json' };
+import m_mstrRoutes from '../networks/mainnet/routes.mstr.json' with { type: 'json' };
+import mainnetCircuits from '../networks/mainnet/circuits.json' with { type: 'json' };
 import type { Profile } from './sdk.js';
 
 export type NetworkName = 'testnet' | 'mainnet';
@@ -41,15 +60,23 @@ export const NETWORKS: Record<NetworkName, NetworkInfo> = {
       { symbol: 'TSLA', name: 'Tesla · test stock token', decimals: 18, kind: 'stock', address: '0xc9f9c86933092bbbfff3ccb4b105a4a94bf3bd4e' },
     ],
   },
-  // Mainnet pools are added here when Lincoln deploys them (profiles, routes and circuits from the core release).
+  // Core release RC.3 (privacy-frontend scripts/sync-asp-mainnet.mjs copies it; this package mirrors those files).
   mainnet: {
     name: 'mainnet', id: 4663, label: 'Robinhood Chain', rpc: 'https://rpc.mainnet.chain.robinhood.com/',
     explorer: 'https://robinhoodchain.blockscout.com', testnet: false, app: 'https://app.lincolnprotocol.com',
-    profiles: {}, routes: {}, circuits: null,
+    profiles: { eth: m_ethProfile as any, usdg: m_usdgProfile as any, nvda: m_nvdaProfile as any, spy: m_spyProfile as any, meta: m_metaProfile as any, tsla: m_tslaProfile as any, googl: m_googlProfile as any, qqq: m_qqqProfile as any, mstr: m_mstrProfile as any },
+    routes: { eth: m_ethRoutes as any[], usdg: m_usdgRoutes as any[], nvda: m_nvdaRoutes as any[], spy: m_spyRoutes as any[], meta: m_metaRoutes as any[], tsla: m_tslaRoutes as any[], googl: m_googlRoutes as any[], qqq: m_qqqRoutes as any[], mstr: m_mstrRoutes as any[] },
+    circuits: mainnetCircuits as Circuits,
     assets: [
       { symbol: 'ETH', name: 'Ether', decimals: 18, kind: 'native', address: NATIVE },
       { symbol: 'USDG', name: 'Global Dollar', decimals: 6, kind: 'stable', address: '0x5fc5360d0400a0fd4f2af552add042d716f1d168' },
       { symbol: 'NVDA', name: 'NVIDIA', decimals: 18, kind: 'stock', address: '0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec' },
+      { symbol: 'SPY', name: 'SPDR S&P 500 ETF', decimals: 18, kind: 'stock', address: '0x117cc2133c37b721f49de2a7a74833232b3b4c0c' },
+      { symbol: 'META', name: 'Meta Platforms', decimals: 18, kind: 'stock', address: '0xc0d6457c16cc70d6790dd43521c899c87ce02f35' },
+      { symbol: 'TSLA', name: 'Tesla', decimals: 18, kind: 'stock', address: '0x322f0929c4625ed5bad873c95208d54e1c003b2d' },
+      { symbol: 'GOOGL', name: 'Alphabet', decimals: 18, kind: 'stock', address: '0x2e0847e8910a9732eb3fb1bb4b70a580adad4fe3' },
+      { symbol: 'QQQ', name: 'Invesco QQQ', decimals: 18, kind: 'stock', address: '0xd5f3879160bc7c32ebb4dc785f8a4f505888de68' },
+      { symbol: 'MSTR', name: 'Strategy', decimals: 18, kind: 'stock', address: '0xec262a75e413fafd0df80480274532c79d42da09' },
     ],
   },
 };

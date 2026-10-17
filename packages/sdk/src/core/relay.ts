@@ -28,17 +28,18 @@ const MESSAGES: Record<string, string> = {
   UNKNOWN_PROOF_ROOT: 'The pool moved on while proving. Try again.',
   RELAY_UNRESOLVED_TRANSACTION: 'The relay is finishing another transaction. Try again in a few seconds.',
   PENDING_NONCE: 'The relay is finishing another transaction. Try again in a few seconds.',
-  RELAY_GAS_BUDGET: 'The relay’s testnet gas budget is used up.',
+  RELAY_GAS_BUDGET: 'The relay’s gas budget is used up for now. Try again later.',
   RELAY_REQUEST_QUEUE_FULL: 'The relay is busy. Try again shortly.',
   EXPIRED_SWAP: 'The quote expired. Get a new quote.',
   QUOTE_UNAVAILABLE: 'Quotes are unavailable for this route.',
   ID_CONFLICT: 'A different request already used this ID.',
   HOST_OR_ORIGIN_DENIED: 'The relay rejected this site’s origin.',
-  RELAY_OFFLINE: 'The testnet relay is offline right now. Your funds are safe: balances are read from the chain, and any note can still exit publicly from your own wallet. Private sends, withdrawals and swaps resume when it is back.',
-  RELAY_UNREACHABLE: 'The testnet relay is offline right now. Your funds are safe: balances are read from the chain, and any note can still exit publicly from your own wallet. Private sends, withdrawals and swaps resume when it is back.',
+  RELAY_OFFLINE: 'The relay is offline right now. Your funds are safe: balances are read from the chain, and any note can still exit publicly from your own wallet. Private sends, withdrawals and swaps resume when it is back.',
+  RELAY_UNREACHABLE: 'The relay is offline right now. Your funds are safe: balances are read from the chain, and any note can still exit publicly from your own wallet. Private sends, withdrawals and swaps resume when it is back.',
   RPC_UNAVAILABLE: 'The relay lost its connection to the chain for a moment. Try again shortly.',
   REQUEST_REJECTED: 'The relay could not complete that right now. Try again in a moment.',
   RATE_LIMITED: 'Too many requests from this network. Wait a minute and try again.',
+  RELAY_NOT_LIVE: 'Private sends, withdrawals and swaps open as soon as the relay goes live. Deposits work now, and a deposit can always be returned to the address that made it.',
 };
 /** Recovery fields the relay attaches to errors (docs/FRONTEND_FEEDBACK_20261016.md in the backend). */
 export interface RelayErrorInfo { errorId?: string; jobPersisted?: boolean | null; jobMayContinue?: boolean; retrySameId?: boolean; transactionHash?: string }
