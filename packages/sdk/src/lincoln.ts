@@ -15,7 +15,7 @@ import { RelayError, getJob, quoteMinOut, quoteOut, relayConfig, relayHealth, ty
 import { exitFee, feePolicy, loadServiceFees, relayFee, transferFee } from './core/fees.js';
 import { deposit, getQuote, inspect, spend, swap, type OpStage } from './core/operations.js';
 import { setCircuitCache } from './core/prover.js';
-import { createKey, keysFromSignature, readKeyFile, signMessageFor, unlockKey, writePrivate } from './core/keystore.js';
+import { createKey, readKeyFile, unlockKey, walletKeys, writePrivate } from './core/keystore.js';
 import { decodeReceiver, encodeReceivers } from './core/receiver-code.js';
 import { checkPolicy, readPolicy, writeDefaultPolicy, type Policy } from './core/policy.js';
 import { usdPrice } from './core/prices.js';
@@ -121,7 +121,7 @@ export class Lincoln {
     if (!kf) throw new LincolnError('NO_WALLET', `No agent wallet for ${net.label}. Run \`lincoln init\` first.`);
     if (kf.chainId !== net.id) throw new LincolnError('WRONG_NETWORK', `${files.key} belongs to chain ${kf.chainId}, not ${net.id}.`);
     const signer = await unlockKey(kf, opts.passphrase ?? process.env.LINCOLN_PASSPHRASE);
-    const keys = keysFromSignature(await signer.signMessage({ message: signMessageFor(net) }), net.id);
+    const keys = await walletKeys(kf, signer, net);
     const account = sdk.createAccount(keys.seed);
     // Change notes saved before a broadcast, so a crash mid-flight can't lose them.
     const cached = await readJson<{ iv: string; data: string } | null>(files.notes, null);

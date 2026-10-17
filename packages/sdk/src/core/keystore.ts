@@ -9,11 +9,25 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { scryptAsync } from '@noble/hashes/scrypt.js';
 import { gcm } from '@noble/ciphers/aes.js';
-import { bytesToHex, hexToBytes, isHex, type Hex } from 'viem';
+import { bytesToHex, getAddress, hexToBytes, isHex, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import type { NetworkInfo } from './network.js';
 
-/** Byte-identical to the web app's sign-in message for this network (privacy-frontend src/wallet/signature-key.ts). */
+/** Byte-identical to the web app's current sign-in message (EIP-4361, privacy-frontend src/wallet/signature-key.ts). */
+export const signInMessageFor = (net: NetworkInfo, address: string) => [
+  'app.lincolnprotocol.com wants you to sign in with your Ethereum account:',
+  getAddress(address),
+  '',
+  `Open your Lincoln private wallet on ${net.label}. Free, no transaction. Anyone with this signature can spend your private balance, so sign it only on app.lincolnprotocol.com.`,
+  '',
+  'URI: https://app.lincolnprotocol.com',
+  'Version: 1',
+  `Chain ID: ${net.id}`,
+  'Nonce: lincolnprivatewallet',
+  'Issued At: 2026-10-17T00:00:00.000Z',
+].join('\n');
+
+/** The legacy (version 1) message: agent wallets created before 17 October 2026 keep using it. */
 export const signMessageFor = (net: NetworkInfo) => [
   'Lincoln Protocol',
   '',
@@ -26,16 +40,25 @@ export const signMessageFor = (net: NetworkInfo) => [
 
 const enc = new TextEncoder();
 const SALT = enc.encode('LINCOLN_SIGNATURE_WALLET_V1');
+const SALT_V2 = enc.encode('LINCOLN_SIGNATURE_WALLET_V2');
 export interface SignatureKeys { seed: string; cacheKey: Uint8Array }
-export function keysFromSignature(signature: Hex, chainId: number): SignatureKeys {
+export function keysFromSignature(signature: Hex, chainId: number, version: 1 | 2 = 1): SignatureKeys {
   if (!isHex(signature) || (signature.length !== 132 && signature.length !== 130)) throw new Error('Unexpected signature format.');
-  const ikm = hexToBytes(signature);
-  const seed = bytesToHex(hkdf(sha256, ikm, SALT, enc.encode(`seed:${chainId}`), 32)).slice(2);
-  return { seed, cacheKey: hkdf(sha256, ikm, SALT, enc.encode(`cache:${chainId}`), 32) };
+  const ikm = hexToBytes(signature), salt = version === 2 ? SALT_V2 : SALT;
+  const seed = bytesToHex(hkdf(sha256, ikm, salt, enc.encode(`seed:${chainId}`), 32)).slice(2);
+  return { seed, cacheKey: hkdf(sha256, ikm, salt, enc.encode(`cache:${chainId}`), 32) };
+}
+/** The seed keys for an agent key file: its sign-in version decides the message (absent = legacy 1). */
+export async function walletKeys(kf: KeyFile, signer: { signMessage(a: { message: string }): Promise<Hex> }, net: NetworkInfo) {
+  const version = kf.signIn ?? 1;
+  const message = version === 2 ? signInMessageFor(net, kf.address) : signMessageFor(net);
+  return keysFromSignature(await signer.signMessage({ message }), net.id, version);
 }
 
 interface Sealed { kdf: 'scrypt'; N: number; r: number; p: number; salt: string; iv: string; data: string }
-export interface KeyFile { schema: 'lincoln-agent-key/v1'; chainId: number; address: Hex; createdAt: string; key: { plain: Hex } | { sealed: Sealed } }
+export interface KeyFile { schema: 'lincoln-agent-key/v1'; chainId: number; address: Hex; createdAt: string; key: { plain: Hex } | { sealed: Sealed };
+  /** Sign-in message version the seed comes from: 2 = SIWE (new wallets), absent = legacy 1. */
+  signIn?: 2 }
 
 const SCRYPT = { N: 2 ** 17, r: 8, p: 1 };
 async function seal(secret: Uint8Array, passphrase: string): Promise<Sealed> {
@@ -61,7 +84,7 @@ export async function createKey(file: string, chainId: number, passphrase?: stri
   if (await readFile(file).then(() => true, () => false)) throw new Error(`An agent wallet already exists at ${file}.`);
   const pk = generatePrivateKey(), address = privateKeyToAccount(pk).address;
   const key = passphrase ? { sealed: await seal(hexToBytes(pk), passphrase) } : { plain: pk };
-  const kf: KeyFile = { schema: 'lincoln-agent-key/v1', chainId, address, createdAt: new Date().toISOString(), key };
+  const kf: KeyFile = { schema: 'lincoln-agent-key/v1', chainId, address, createdAt: new Date().toISOString(), key, signIn: 2 };
   await writePrivate(file, JSON.stringify(kf, null, 2));
   return kf;
 }
