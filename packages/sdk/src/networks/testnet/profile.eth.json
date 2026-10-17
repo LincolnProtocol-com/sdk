@@ -1,0 +1,58 @@
+{
+  "schema": "phase2-asp-test-profile/v1",
+  "experimental": true,
+  "testOnly": true,
+  "productionReady": false,
+  "testnetOnly": true,
+  "chain": {
+    "id": 46630,
+    "rpcUrl": "https://rpc.testnet.chain.robinhood.com/"
+  },
+  "genesisHash": "0x829a42e6d68c872aafcef3abb2123fe371138fc415dd8b44381bbbf23049dd32",
+  "artifactSHA256": "8ad30100ea7b56f7b931a76c86d925430ed32d6504394a8c2db033e9fb135677",
+  "sourceSetSHA256": "452405ebd293520a82209dae755f8247bb5359390c9ccecfa4da8b28ef73703e",
+  "circuitManifests": {
+    "joinsplit": "eb26b2beeb49db2fd2a66562978d6f1b48a1797717b2766708534263f5fd743f",
+    "holder-exit": "6b10efa1a627fbb6d9ef88c4a756318187f4053b66e35939a6a27b3c9954f374"
+  },
+  "pool": {
+    "address": "0x4316Cb2BCC88e5B569D00139605551410721b99F",
+    "runtimeCodeHash": "0x7fd39fc2ae76313c33cf03a80deff085a8120f05848c9ef35d55848c77f52357",
+    "asset": "0x0000000000000000000000000000000000000000",
+    "noteModel": "factorized-asp-v1",
+    "scope": "11559057254757403552402436291141331262686150044973904255938672266781942539286",
+    "treeDepth": 20,
+    "startBlock": "136224232"
+  },
+  "verifier": {
+    "address": "0x27E83DB00a4B0C1836f18526D063303383A82Dc4",
+    "runtimeCodeHash": "0x7e4e24ef5001d4bb995b27310b7509b36be8964171556c897f484b4d33f3c80b"
+  },
+  "exitVerifier": {
+    "address": "0x763ccBAb7b84c83c2c3EA25a5808b15b04df3151",
+    "runtimeCodeHash": "0x5be1bd83e64768e07b038f9c6b90a90ec46a7f2b02c8887def96ec0b05c1b29b"
+  },
+  "registry": {
+    "address": "0xE00C231066C7562d8a1beEcF5aAea29183707438",
+    "runtimeCodeHash": "0x997e8f9dc3fb0d6b9b34f47c6ed55611f177ff2c80cf0350c403e5d7972ca5b9",
+    "provider": "0x36437b878415EdA1a24186CF79AFffBc9ecEd298",
+    "startBlock": "136224204"
+  },
+  "libraries": {
+    "PoseidonT3": {
+      "address": "0x6A30f5e2feC41ab54125e5CA914564b8D2aE0d44",
+      "runtimeCodeHash": "0x8d1e27f031dd9be123521f889505ce899e63d22d116555ad37bd0a12817437c4",
+      "reused": true
+    },
+    "PoseidonT4": {
+      "address": "0xfec6331d1428813EE8Be12412f4ef3C96C6D2892",
+      "runtimeCodeHash": "0x4ef28d58ccbb25134be868233face2c4f772d776f8a8b2ecb27934ee694927e3"
+    }
+  },
+  "limitations": [
+    "Development proving parameters; no production audit or anonymity guarantee.",
+    "Current-note approval is not original-deposit lineage revocation.",
+    "Public exits reveal the specific commitment and value."
+  ],
+  "relayer": "0x42ce6Ece7DD3329880774c060cF158089b043EEf"
+}

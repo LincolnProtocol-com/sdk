@@ -1,0 +1,38 @@
+{
+  "joinsplit": {
+    "manifestSHA256": "eb26b2beeb49db2fd2a66562978d6f1b48a1797717b2766708534263f5fd743f",
+    "wasm": {
+      "path": "/circuits/asp/joinsplit.wasm",
+      "bytes": 2559210,
+      "sha256": "54dd12b723c5a3da1b3bae05b554404aa13b3cbaedbbd07f08a26957a6294fdf"
+    },
+    "zkey": {
+      "path": "/circuits/asp/joinsplit.dev.zkey",
+      "bytes": 14168820,
+      "sha256": "529d7b8cf382274e39de3fc0ae05ab52e89868dbf286a857423c15f47bf15ca7"
+    },
+    "vkey": {
+      "path": "/circuits/asp/joinsplit.vkey.json",
+      "bytes": 4721,
+      "sha256": "ac205ae69e093b8d5f106a33108da3c10f0dc2ba0d56eaac380a2b0bda4b89e6"
+    }
+  },
+  "holder-exit": {
+    "manifestSHA256": "6b10efa1a627fbb6d9ef88c4a756318187f4053b66e35939a6a27b3c9954f374",
+    "wasm": {
+      "path": "/circuits/asp/holder-exit.wasm",
+      "bytes": 2384051,
+      "sha256": "fb570f26df068248b980b0460bb13ce5fc886462201206fcdafea26e6901ae3f"
+    },
+    "zkey": {
+      "path": "/circuits/asp/holder-exit.dev.zkey",
+      "bytes": 798464,
+      "sha256": "385365eb7191f0420c88d5674bc0afa780bdade7d1e9b4a9ad1df9a43ae0c44c"
+    },
+    "vkey": {
+      "path": "/circuits/asp/holder-exit.vkey.json",
+      "bytes": 3940,
+      "sha256": "eee79c6e33510057552d3bd446697061da38532eb262f04a0b9f4652f8034d53"
+    }
+  }
+}

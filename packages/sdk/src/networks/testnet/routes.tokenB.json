@@ -1,0 +1,198 @@
+[
+  {
+    "id": "uniswap-tokenB-to-eth",
+    "route": {
+      "id": "uniswap-tokenB-to-eth",
+      "protocol": "Uniswap V3",
+      "source": "tokenB",
+      "target": "eth",
+      "router": "0x3104c83380561a143544537137672ab5f1cd3ee5",
+      "factory": "0xce0489c6b81e5925108682aef794b427d5254730",
+      "quoter": "0x2d515a7db9f19e49e99dfd42af9d13d24ddf1288",
+      "wrappedNative": "0x7943e237c7F95DA44E0301572D358911207852Fa",
+      "adapter": "0x939C260404D3E2ffb5eDE086548687c83059F933",
+      "adapterType": "Phase2RouteAdapter",
+      "path": "0x93d079cd29edf4b25a94e153366e20c8e331558e000bb8f7c780e1abb2cc26df92c8e23f138af0297e0184000bb87943e237c7f95da44e0301572d358911207852fa",
+      "hops": [
+        {
+          "pool": "0xf1E70A230175A1A4557Feb9bfD104eeeC7b7a8d2",
+          "parameter": 3000,
+          "tokenIn": "0x93D079cD29EDF4b25a94E153366e20C8e331558e",
+          "tokenOut": "0xF7C780E1aBb2CC26dF92C8E23f138aF0297E0184",
+          "runtimeCodeHash": "0xb733ee186a25e6347600255810c1477fe8826074294838540e07460afd6d24d6"
+        },
+        {
+          "pool": "0x26C4C5A18AA9672056cd17812A3e0441d4c53a49",
+          "parameter": 3000,
+          "tokenIn": "0xF7C780E1aBb2CC26dF92C8E23f138aF0297E0184",
+          "tokenOut": "0x7943e237c7F95DA44E0301572D358911207852Fa",
+          "runtimeCodeHash": "0x35ab4221cb17c72412e0ad2728ab13e6de232a1fac77f6e8dfdd503a6a7d9bb8"
+        }
+      ],
+      "runtimeCodeHashes": {
+        "router": "0x8bc5b1c1c75d5a2201e0042c9f08614227af3e9708212168ea9a1de540fea584",
+        "factory": "0x9a359f2fd802beee5617097707370f831efc000d75e97dd9fe7c4921821f8ccc",
+        "quoter": "0x4bafeda7cb7ce899d491578c7e662f58782d5af057078a01eb81a493a86ca649",
+        "wrappedNative": "0x5706be52f64875fee65a2cec0d80e47a23d8793cbe85d214b48445e2d05f5353",
+        "adapter": "0x9f05e3cbf8366825ea41d692588144c718368a364b55430161ed8df235d5bb58"
+      },
+      "deployment": "self-deployed-testnet-official-artifacts"
+    },
+    "targetProfile": {
+      "schema": "phase2-asp-test-profile/v1",
+      "experimental": true,
+      "testOnly": true,
+      "productionReady": false,
+      "testnetOnly": true,
+      "chain": {
+        "id": 46630,
+        "rpcUrl": "https://rpc.testnet.chain.robinhood.com/"
+      },
+      "genesisHash": "0x829a42e6d68c872aafcef3abb2123fe371138fc415dd8b44381bbbf23049dd32",
+      "artifactSHA256": "8ad30100ea7b56f7b931a76c86d925430ed32d6504394a8c2db033e9fb135677",
+      "sourceSetSHA256": "452405ebd293520a82209dae755f8247bb5359390c9ccecfa4da8b28ef73703e",
+      "circuitManifests": {
+        "joinsplit": "eb26b2beeb49db2fd2a66562978d6f1b48a1797717b2766708534263f5fd743f",
+        "holder-exit": "6b10efa1a627fbb6d9ef88c4a756318187f4053b66e35939a6a27b3c9954f374"
+      },
+      "pool": {
+        "address": "0x4316Cb2BCC88e5B569D00139605551410721b99F",
+        "runtimeCodeHash": "0x7fd39fc2ae76313c33cf03a80deff085a8120f05848c9ef35d55848c77f52357",
+        "asset": "0x0000000000000000000000000000000000000000",
+        "noteModel": "factorized-asp-v1",
+        "scope": "11559057254757403552402436291141331262686150044973904255938672266781942539286",
+        "treeDepth": 20,
+        "startBlock": "136224232"
+      },
+      "verifier": {
+        "address": "0x27E83DB00a4B0C1836f18526D063303383A82Dc4",
+        "runtimeCodeHash": "0x7e4e24ef5001d4bb995b27310b7509b36be8964171556c897f484b4d33f3c80b"
+      },
+      "exitVerifier": {
+        "address": "0x763ccBAb7b84c83c2c3EA25a5808b15b04df3151",
+        "runtimeCodeHash": "0x5be1bd83e64768e07b038f9c6b90a90ec46a7f2b02c8887def96ec0b05c1b29b"
+      },
+      "registry": {
+        "address": "0xE00C231066C7562d8a1beEcF5aAea29183707438",
+        "runtimeCodeHash": "0x997e8f9dc3fb0d6b9b34f47c6ed55611f177ff2c80cf0350c403e5d7972ca5b9",
+        "provider": "0x36437b878415EdA1a24186CF79AFffBc9ecEd298",
+        "startBlock": "136224204"
+      },
+      "libraries": {
+        "PoseidonT3": {
+          "address": "0x6A30f5e2feC41ab54125e5CA914564b8D2aE0d44",
+          "runtimeCodeHash": "0x8d1e27f031dd9be123521f889505ce899e63d22d116555ad37bd0a12817437c4",
+          "reused": true
+        },
+        "PoseidonT4": {
+          "address": "0xfec6331d1428813EE8Be12412f4ef3C96C6D2892",
+          "runtimeCodeHash": "0x4ef28d58ccbb25134be868233face2c4f772d776f8a8b2ecb27934ee694927e3"
+        }
+      },
+      "limitations": [
+        "Development proving parameters; no production audit or anonymity guarantee.",
+        "Current-note approval is not original-deposit lineage revocation.",
+        "Public exits reveal the specific commitment and value."
+      ],
+      "relayer": "0x42ce6Ece7DD3329880774c060cF158089b043EEf"
+    }
+  },
+  {
+    "id": "up-tokenB-to-eth",
+    "route": {
+      "id": "up-tokenB-to-eth",
+      "protocol": "UP Slipstream",
+      "source": "tokenB",
+      "target": "eth",
+      "router": "0xd712abe4D96B4f8Fd00795131000F8aE9C52B427",
+      "factory": "0x27E7a36A0f561ae23fF65cf4Ac270D3cb8b35222",
+      "quoter": "0x2e502B72fD2f811Ef0623d94eD2338da26e85956",
+      "wrappedNative": "0x7943e237c7F95DA44E0301572D358911207852Fa",
+      "adapter": "0xC570E73Cd60BcB5C6A30EE3Df5c67BAf612a3D7b",
+      "adapterType": "Phase2RouteAdapter",
+      "path": "0x93d079cd29edf4b25a94e153366e20c8e331558e000064f7c780e1abb2cc26df92c8e23f138af0297e01840000647943e237c7f95da44e0301572d358911207852fa",
+      "hops": [
+        {
+          "pool": "0x7897B9997bcDD935df005CCe600584bAc30F83B1",
+          "parameter": 100,
+          "tokenIn": "0x93D079cD29EDF4b25a94E153366e20C8e331558e",
+          "tokenOut": "0xF7C780E1aBb2CC26dF92C8E23f138aF0297E0184",
+          "runtimeCodeHash": "0x5cba9702eb8d6910f17fe999658723f699d7100090958c738a14194d8d4c291e"
+        },
+        {
+          "pool": "0x74293871F165E80DD53555A407e4f5E0a77B14A2",
+          "parameter": 100,
+          "tokenIn": "0xF7C780E1aBb2CC26dF92C8E23f138aF0297E0184",
+          "tokenOut": "0x7943e237c7F95DA44E0301572D358911207852Fa",
+          "runtimeCodeHash": "0x5cba9702eb8d6910f17fe999658723f699d7100090958c738a14194d8d4c291e"
+        }
+      ],
+      "runtimeCodeHashes": {
+        "router": "0x53d1542370546f7336b718a7ef482e1b958d9385fc2e989c32f9ebaf94000efd",
+        "factory": "0x5d9a80b114b9d25ad8cf5e5d47c38b61b667ef8e89feb18e208d6d14c882e44d",
+        "quoter": "0x9a447338f09545c1fd48e507f9f83412da85a2710c23158c18f33c52b8bae107",
+        "wrappedNative": "0x5706be52f64875fee65a2cec0d80e47a23d8793cbe85d214b48445e2d05f5353",
+        "adapter": "0x2dc6a1ea0dffa2dabd605d6da401b7c05e4e264bf1465815acd4422951c9b7c5"
+      },
+      "deployment": "existing-public-testnet"
+    },
+    "targetProfile": {
+      "schema": "phase2-asp-test-profile/v1",
+      "experimental": true,
+      "testOnly": true,
+      "productionReady": false,
+      "testnetOnly": true,
+      "chain": {
+        "id": 46630,
+        "rpcUrl": "https://rpc.testnet.chain.robinhood.com/"
+      },
+      "genesisHash": "0x829a42e6d68c872aafcef3abb2123fe371138fc415dd8b44381bbbf23049dd32",
+      "artifactSHA256": "8ad30100ea7b56f7b931a76c86d925430ed32d6504394a8c2db033e9fb135677",
+      "sourceSetSHA256": "452405ebd293520a82209dae755f8247bb5359390c9ccecfa4da8b28ef73703e",
+      "circuitManifests": {
+        "joinsplit": "eb26b2beeb49db2fd2a66562978d6f1b48a1797717b2766708534263f5fd743f",
+        "holder-exit": "6b10efa1a627fbb6d9ef88c4a756318187f4053b66e35939a6a27b3c9954f374"
+      },
+      "pool": {
+        "address": "0x4316Cb2BCC88e5B569D00139605551410721b99F",
+        "runtimeCodeHash": "0x7fd39fc2ae76313c33cf03a80deff085a8120f05848c9ef35d55848c77f52357",
+        "asset": "0x0000000000000000000000000000000000000000",
+        "noteModel": "factorized-asp-v1",
+        "scope": "11559057254757403552402436291141331262686150044973904255938672266781942539286",
+        "treeDepth": 20,
+        "startBlock": "136224232"
+      },
+      "verifier": {
+        "address": "0x27E83DB00a4B0C1836f18526D063303383A82Dc4",
+        "runtimeCodeHash": "0x7e4e24ef5001d4bb995b27310b7509b36be8964171556c897f484b4d33f3c80b"
+      },
+      "exitVerifier": {
+        "address": "0x763ccBAb7b84c83c2c3EA25a5808b15b04df3151",
+        "runtimeCodeHash": "0x5be1bd83e64768e07b038f9c6b90a90ec46a7f2b02c8887def96ec0b05c1b29b"
+      },
+      "registry": {
+        "address": "0xE00C231066C7562d8a1beEcF5aAea29183707438",
+        "runtimeCodeHash": "0x997e8f9dc3fb0d6b9b34f47c6ed55611f177ff2c80cf0350c403e5d7972ca5b9",
+        "provider": "0x36437b878415EdA1a24186CF79AFffBc9ecEd298",
+        "startBlock": "136224204"
+      },
+      "libraries": {
+        "PoseidonT3": {
+          "address": "0x6A30f5e2feC41ab54125e5CA914564b8D2aE0d44",
+          "runtimeCodeHash": "0x8d1e27f031dd9be123521f889505ce899e63d22d116555ad37bd0a12817437c4",
+          "reused": true
+        },
+        "PoseidonT4": {
+          "address": "0xfec6331d1428813EE8Be12412f4ef3C96C6D2892",
+          "runtimeCodeHash": "0x4ef28d58ccbb25134be868233face2c4f772d776f8a8b2ecb27934ee694927e3"
+        }
+      },
+      "limitations": [
+        "Development proving parameters; no production audit or anonymity guarantee.",
+        "Current-note approval is not original-deposit lineage revocation.",
+        "Public exits reveal the specific commitment and value."
+      ],
+      "relayer": "0x42ce6Ece7DD3329880774c060cF158089b043EEf"
+    }
+  }
+]

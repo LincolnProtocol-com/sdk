@@ -1,0 +1,10 @@
+{
+  "name": "@lincolnprotocol/cli",
+  "version": "0.1.0",
+  "description": "lincoln: private balances on Robinhood Chain from the command line, for people and AI agents.",
+  "type": "module",
+  "bin": { "lincoln": "dist/index.js" },
+  "files": ["dist"],
+  "engines": { "node": ">=20" },
+  "dependencies": { "@lincolnprotocol/sdk": "0.1.0" }
+}

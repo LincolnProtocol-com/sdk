@@ -1,0 +1,16 @@
+{
+  "name": "lincoln-sdk-workspace",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/sdk", "packages/cli", "packages/mcp"],
+  "scripts": {
+    "build": "tsc -b packages/sdk packages/cli packages/mcp",
+    "test": "vitest run",
+    "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
+  }
+}
