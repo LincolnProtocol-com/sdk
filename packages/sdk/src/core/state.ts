@@ -15,15 +15,31 @@ export interface PoolState extends PublicState {
   source?: 'relay' | 'chain';
 }
 
+// Chain checks shared by every refresh: the registry's accepted policy for an epoch (one registry for all pools, so
+// one call per epoch, not one per pool) and whether a pool knows a root. Only positive answers are kept, for a minute:
+// an RPC node a block behind the relay may not know a new root or epoch yet, and that must be asked again.
+const CHECK_TTL_MS = 60_000;
+const checks = new Map<string, { at: number; value: Promise<unknown> }>();
+function cached<T>(key: string, load: () => Promise<T>, keep: (v: T) => boolean): Promise<T> {
+  const hit = checks.get(key);
+  if (hit && Date.now() - hit.at < CHECK_TTL_MS) return hit.value as Promise<T>;
+  const value = load();
+  checks.set(key, { at: Date.now(), value });
+  value.then(v => { if (!keep(v)) checks.delete(key); }, () => checks.delete(key));
+  return value;
+}
+
 export async function loadPoolState(pool: PoolId): Promise<PoolState> {
   const state = await relayState(pool) as PoolState;
   const profile = POOLS[pool].profile;
   if (state.pool?.toLowerCase() !== profile.pool.address.toLowerCase() || state.chainId !== profile.chain.id) throw new Error('Relay returned state for a different pool.');
   const epoch = state.asp?.epoch ? BigInt(state.asp.epoch) : 0n;
   const [known, accepted] = await Promise.all([
-    publicClient.readContract({ address: profile.pool.address as Hex, abi: POOL_ABI, functionName: 'knownRoot', args: [BigInt(state.root)] }) as Promise<boolean>,
+    cached(`root:${profile.pool.address}:${state.root}`, () =>
+      publicClient.readContract({ address: profile.pool.address as Hex, abi: POOL_ABI, functionName: 'knownRoot', args: [BigInt(state.root)] }) as Promise<boolean>, v => v),
     epoch > 0n
-      ? publicClient.readContract({ address: profile.registry.address as Hex, abi: REGISTRY_ABI, functionName: 'acceptedPolicy', args: [epoch] }) as Promise<readonly [bigint, bigint]>
+      ? cached(`policy:${profile.registry.address}:${epoch}`, () =>
+          publicClient.readContract({ address: profile.registry.address as Hex, abi: REGISTRY_ABI, functionName: 'acceptedPolicy', args: [epoch] }) as Promise<readonly [bigint, bigint]>, v => v[0] !== 0n)
       : Promise.resolve([0n, 0n] as const),
   ]);
   if (!known) throw new Error('Relay state root is not known to the pool contract.');
