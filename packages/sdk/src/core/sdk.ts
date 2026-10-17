@@ -336,6 +336,27 @@ export function selectNotes(notes: Note[], amount: bigint): Note[] {
   return best;
 }
 
+/** Change policy for a spend that has a free output slot (see prepareJoinSplit). */
+export interface ChangePolicy { minChange: bigint; split: boolean }
+/** Picks one or two notes covering `amount`, preferring ones that leave change of at least `minChange`.
+ *  A spend with change creates a new note like most others; an exact spend creates none, which observers
+ *  can see on chain. Falls back to any positive change, then to an exact spend (same totals as selectNotes). */
+export function selectNotesForChange(notes: Note[], amount: bigint, minChange: bigint): Note[] {
+  const target = field(amount, MAX_VALUE, true);
+  // selectNotes finds the least total at or above a target with one or two notes: aim past the amount first.
+  for (const aim of [target + (minChange > 0n ? minChange : 1n), target + 1n]) {
+    if (aim > MAX_VALUE) continue;
+    try { return selectNotes(notes, aim); } catch { /* no such combination: try the next aim */ }
+  }
+  return selectNotes(notes, target);
+}
+/** Splits change into two positive parts at random, each at least `min`. */
+function splitChange(change: bigint, min: bigint): [bigint, bigint] {
+  const room = change - 2n * min, r = BigInt(`0x${toHex(crypto.getRandomValues(new Uint8Array(16))).replace(/^0x/, '')}`);
+  const first = min + (room > 0n ? r % (room + 1n) : 0n);
+  return [first, change - first];
+}
+
 // ---------- ASP association set ----------
 export const associationLeaf = (commitment: bigint | string, profile: Profile) => poseidon([field(commitment, FIELD - 1n, true), normalizeProfile(profile).scope]);
 function associationLeaves(leaves: (bigint | string)[]) {
@@ -389,8 +410,10 @@ export interface Prepared {
   inputSignals: Record<string, unknown>; publicSignals: string[]; extData: ExtData;
   encryptedOutputs: Hex[]; outputNotes: Note[]; inputNotes: Note[];
 }
-export function prepareJoinSplit({ account, profile, state, aspState = state?.asp, inputs, outputs = [], externalData }:
-  { account: Account; profile: Profile; state: PublicState; aspState?: ASPState; inputs?: Note[]; outputs?: { receiver: Receiver; value: bigint }[]; externalData: ExtDataInput }): Prepared {
+export function prepareJoinSplit({ account, profile, state, aspState = state?.asp, inputs, outputs = [], externalData, change: changePolicy }:
+  { account: Account; profile: Profile; state: PublicState; aspState?: ASPState; inputs?: Note[]; outputs?: { receiver: Receiver; value: bigint }[]; externalData: ExtDataInput;
+    /** Prefer inputs that leave change; with split, change of at least 2×minChange becomes two notes (needs a free output slot). */
+    change?: ChangePolicy }): Prepared {
   accountSeed(account);
   const { tree, spent } = publicState(state, profile), ext = normalizeExtData(externalData), secret = spendingSecret(account, profile), self = receiverAddress(account, profile);
   check(ext.publicIn === 0n, 'ASP funding must use depositDynamic.');
@@ -402,7 +425,8 @@ export function prepareJoinSplit({ account, profile, state, aspState = state?.as
   check(target <= MAX_VALUE, 'Requested public and private output total exceeds uint128.');
   if (inputs === undefined) {
     const recovered = recoverAccount(structuredClone(account), profile, state);
-    inputs = target > ext.publicIn ? selectNotes(recovered.notes.filter(n => approved.has(String(associationLeaf(n.commitment, profile)))), target - ext.publicIn) : [];
+    const ready = recovered.notes.filter(n => approved.has(String(associationLeaf(n.commitment, profile))));
+    inputs = target > ext.publicIn ? (changePolicy ? selectNotesForChange(ready, target - ext.publicIn, changePolicy.minChange) : selectNotes(ready, target - ext.publicIn)) : [];
   }
   check(Array.isArray(inputs) && inputs.length <= 2, 'JoinSplit supports at most two real inputs.');
   const inputNotes = inputs.map(n => normalizeNote(n, profile));
@@ -422,7 +446,12 @@ export function prepareJoinSplit({ account, profile, state, aspState = state?.as
   const inputTotal = inputNotes.reduce((s, n) => s + n.value, 0n) + ext.publicIn;
   check(inputTotal <= MAX_VALUE && inputTotal >= target, 'JoinSplit value conservation failed.');
   const change = inputTotal - target;
-  if (change > 0n) { check(requested.length < 2, 'Two recipient outputs leave no slot for change.'); requested.push({ receiver: self, value: change }); }
+  if (change > 0n) {
+    check(requested.length < 2, 'Two recipient outputs leave no slot for change.');
+    if (changePolicy?.split && requested.length === 0 && change >= 2n * changePolicy.minChange && changePolicy.minChange > 0n)
+      for (const part of splitChange(change, changePolicy.minChange)) requested.push({ receiver: self, value: part });
+    else requested.push({ receiver: self, value: change });
+  }
   const scope = normalizeProfile(profile).scope;
   while (witnesses.length < 2) {
     const dummySecret = randomField(), dummyPub = poseidon([dummySecret]), blinding = randomField(), commitment = poseidon([0n, poseidon([dummyPub, blinding])]);
@@ -497,14 +526,14 @@ export function swapActionHash({ sourceProfile, targetProfile, route, action }: 
 export const swapActionEnvelope = (options: Parameters<typeof swapActionHash>[0]): Hex => `${swapActionHash(options)}${'00'.repeat(224)}` as Hex;
 export interface PreparedSwap extends Prepared { action: SwapAction; actionHash: Hex; actionEnvelope: Hex; route: ReturnType<typeof normalizeSwapRoute> }
 /** Builds a source proof and a bound target invoice without predicting DEX output. */
-export function prepareSwap({ account, sourceProfile, targetProfile, sourceState, route, action, inputs }:
-  { account: Account; sourceProfile: Profile; targetProfile: Profile; sourceState: PublicState; route: SwapRoute; action: { processor: string; amountIn: bigint; minAmountOut: bigint; deadline: bigint }; inputs?: Note[] }): PreparedSwap {
+export function prepareSwap({ account, sourceProfile, targetProfile, sourceState, route, action, inputs, minChange }:
+  { account: Account; sourceProfile: Profile; targetProfile: Profile; sourceState: PublicState; route: SwapRoute; action: { processor: string; amountIn: bigint; minAmountOut: bigint; deadline: bigint }; inputs?: Note[]; minChange?: bigint }): PreparedSwap {
   const r = normalizeSwapRoute({ sourceProfile, targetProfile, route });
   const invoice = createDynamicReceive(account, targetProfile);
   const a = normalizeSwapAction({ ...action, targetPrecommitment: invoice.precommitment, encryptedTemplate: invoice.encryptedTemplate });
   const prepared = prepareJoinSplit({ account, profile: sourceProfile, state: sourceState, inputs, outputs: [], externalData: {
     recipient: r.adapter, feeRecipient: NATIVE_ASSET, processor: r.adapter, publicIn: 0n, publicOut: a.amountIn, fee: 0n,
-  } });
+  }, ...(minChange !== undefined ? { change: { minChange, split: false } } : {}) });
   check(prepared.outputNotes[1].commitment === 0n, 'Swap action requires the second source output to be empty.');
   const options = { sourceProfile, targetProfile, route, action: a }, actionHash = swapActionHash(options), actionEnvelope = swapActionEnvelope(options);
   prepared.encryptedOutputs[1] = actionEnvelope;
@@ -680,15 +709,15 @@ export function feeSwapActionHash({ sourceProfile, targetProfile, route, action 
 export const feeSwapActionEnvelope = (options: Parameters<typeof feeSwapActionHash>[0]): Hex => `${feeSwapActionHash(options)}${'00'.repeat(224)}` as Hex;
 export interface PreparedFeeSwap extends Prepared { action: FeeSwapAction; actionHash: Hex; actionEnvelope: Hex; route: ReturnType<typeof normalizeFeeSwapRoute> }
 /** A paid swap: minAmountOut is the user's NET private output after the adapter's fee; maxServiceFee caps that fee. */
-export function prepareFeeSwap({ account, sourceProfile, targetProfile, sourceState, route, action, inputs }:
-  { account: Account; sourceProfile: Profile; targetProfile: Profile; sourceState: PublicState; route: SwapRoute; action: { processor: string; amountIn: bigint; minAmountOut: bigint; deadline: bigint; maxServiceFee: bigint }; inputs?: Note[] }): PreparedFeeSwap {
+export function prepareFeeSwap({ account, sourceProfile, targetProfile, sourceState, route, action, inputs, minChange }:
+  { account: Account; sourceProfile: Profile; targetProfile: Profile; sourceState: PublicState; route: SwapRoute; action: { processor: string; amountIn: bigint; minAmountOut: bigint; deadline: bigint; maxServiceFee: bigint }; inputs?: Note[]; minChange?: bigint }): PreparedFeeSwap {
   const r = normalizeFeeSwapRoute({ sourceProfile, targetProfile, route });
   const invoice = createDynamicReceive(account, targetProfile);
   const a = normalizeFeeSwapAction({ ...action, targetPrecommitment: invoice.precommitment, encryptedTemplate: invoice.encryptedTemplate });
   minimumGrossOutput(a.minAmountOut, r.feeBps);
   const prepared = prepareJoinSplit({ account, profile: sourceProfile, state: sourceState, inputs, outputs: [], externalData: {
     recipient: r.adapter, feeRecipient: NATIVE_ASSET, processor: r.adapter, publicIn: 0n, publicOut: a.amountIn, fee: 0n,
-  } });
+  }, ...(minChange !== undefined ? { change: { minChange, split: false } } : {}) });
   check(prepared.outputNotes[1].commitment === 0n, 'Swap action requires the second source output to be empty.');
   const options = { sourceProfile, targetProfile, route, action: a }, actionHash = feeSwapActionHash(options), actionEnvelope = feeSwapActionEnvelope(options);
   prepared.encryptedOutputs[1] = actionEnvelope;

@@ -8,6 +8,7 @@ import { loadPoolState, type PoolState } from './state.js';
 import { RETRYABLE, RelayError, newJobId, relayConfig, relayQuote, submitJob, waitForJob, type JobKind, type Quote } from './relay.js';
 import { prove, type Circuit, type ProofStage } from './prover.js';
 import { exitFee, loadServiceFees, relayFee, transferFee } from './fees.js';
+import { minChangeFor } from './denominations.js';
 
 export type OpStage = 'sync' | 'prepare' | ProofStage | 'save' | 'sign' | 'relay' | 'confirm' | 'done';
 const ZERO = sdk.NATIVE_ASSET;
@@ -99,6 +100,9 @@ export async function spend({ account, pool, amount, recipient, receiver, onStag
     const prepared = sdk.prepareJoinSplit({
       account, profile: info.profile, state,
       outputs: receiver ? [{ receiver, value: amount }] : [],
+      // Prefer inputs that leave change; a withdrawal splits larger change into two notes (an exact spend
+      // creates no change note, which observers can see).
+      change: { minChange: minChangeFor(info), split: !receiver },
       // A private send's fee is its only public output and pays the relayer, so nothing goes to a
       // recipient; the relay still requires a non-zero one whenever there is a public output, so a
       // fee-paying send names the relayer (the same for every send: nothing to link).
@@ -135,7 +139,7 @@ export function swap({ account, pool, routeId, quote, onStage, persist, onSubmit
   return relayed(pool, 'swap', 'joinsplit', onStage, onSubmitted, state => {
     requireApprovedSet(state);
     if (BigInt(quote.deadline) <= BigInt(state.blockTimestamp)) throw new RelayError('EXPIRED_SWAP');
-    const common = { account, sourceProfile: info.profile, targetProfile: POOLS[entry.target].profile, sourceState: state, route: entry.route };
+    const common = { account, sourceProfile: info.profile, targetProfile: POOLS[entry.target].profile, sourceState: state, route: entry.route, minChange: minChangeFor(info) };
     // Paid routes bind the NET minimum and an absolute fee cap (from the quote's netQuote); legacy routes the gross minimum.
     const prepared = sdk.isFeeRoute(entry.route)
       ? (() => {

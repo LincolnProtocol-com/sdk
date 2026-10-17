@@ -19,6 +19,7 @@ import { createKey, readKeyFile, unlockKey, walletKeys, writePrivate } from './c
 import { decodeReceiver, encodeReceivers } from './core/receiver-code.js';
 import { checkPolicy, readPolicy, writeDefaultPolicy, type Policy } from './core/policy.js';
 import { usdPrice } from './core/prices.js';
+import { minChangeFor } from './core/denominations.js';
 import { poolCaps, capError, swapCapCheck, swapCapMessage } from './core/caps.js';
 import { BRIDGE_DONE, bridgeLive, bridgeRoute, bridgeStatus, findChain, nudgeBridge, quoteBridge, DEST_CHAINS } from './core/bridge.js';
 import type { PrivateKeyAccount } from 'viem/accounts';
@@ -200,6 +201,15 @@ export class Lincoln {
     }
   }
 
+  /** Whether spending `gross` uses ready notes exactly (no change note), after the wallet's change-preferring selection. */
+  private async spendsExactly(pool: PoolInfo, gross: bigint) {
+    try {
+      const h = inspect(this.account, pool.id, await loadPoolState(pool.id));
+      const sel = sdk.selectNotesForChange(h.notes.filter(n => n.status === 'approved').map(n => n.note), gross, minChangeFor(pool));
+      return sel.reduce((t, n) => t + n.value, 0n) === gross;
+    } catch { return false; }
+  }
+
   /** Private payment to a lincoln3: address. */
   async quoteSend({ asset, amount, to }: { asset: string; amount: string; to: string }): Promise<QuoteRecord> {
     const pool = findPool(asset), raw = parseAmount(amount, pool);
@@ -223,8 +233,10 @@ export class Lincoln {
     const base = { action: 'withdraw' as const, asset: pool.symbol, pool: pool.id, decimals: pool.decimals, amount: fmt(raw, pool.decimals), amountRaw: String(raw), fee: fmt(fee, pool.decimals), feeAsset: pool.symbol, to: to.trim() };
     const robinhoodChain = !dest || ['robinhood', 'hood', String(this.net.id)].includes(dest.toLowerCase());
     if (robinhoodChain) {
+      const exact = await this.spendsExactly(pool, raw);
       return this.finishQuote({ ...base, receives: fmt(raw - fee, pool.decimals), receivesAsset: pool.symbol,
-        notes: ['The recipient and amount become public; which deposit paid for it stays hidden.', ROUND_TIP] }, pool, raw, to);
+        notes: ['The recipient and amount become public; which deposit paid for it stays hidden.', ROUND_TIP,
+          ...(exact ? ['This uses up your notes exactly, so it leaves no private change, which makes the withdrawal easier to spot. Withdrawing a little less avoids that.'] : [])] }, pool, raw, to);
     }
     const target = findChain(dest!);
     if (!target) throw new LincolnError('UNKNOWN_CHAIN', `Unknown chain "${dest}". Use robinhood, ${DEST_CHAINS.map(c => c.name.toLowerCase()).join(', ')}.`);
