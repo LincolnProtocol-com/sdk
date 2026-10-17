@@ -34,14 +34,15 @@ Options
   --to <chain>                withdraw to ${supportedChains().join(', ')}
 
 Environment
-  LINCOLN_PASSPHRASE          encrypts the agent key at init and unlocks it later
+  LINCOLN_PASSPHRASE          encrypts the agent key at init and unlocks it later (required on mainnet;
+                              --insecure-plaintext-key at init skips it for a throwaway test wallet)
   LINCOLN_RPC, LINCOLN_APP    custom Robinhood Chain RPC, Lincoln app origin`;
 
 const { values: opts, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     network: { type: 'string' }, home: { type: 'string' }, json: { type: 'boolean' }, yes: { type: 'boolean', short: 'y' },
-    approve: { type: 'boolean' }, to: { type: 'string' }, quote: { type: 'string' }, slippage: { type: 'string' }, help: { type: 'boolean', short: 'h' },
+    approve: { type: 'boolean' }, 'insecure-plaintext-key': { type: 'boolean' }, to: { type: 'string' }, quote: { type: 'string' }, slippage: { type: 'string' }, help: { type: 'boolean', short: 'h' },
   },
 });
 const json = !!opts.json;
@@ -96,7 +97,7 @@ async function main() {
   const base = { network: opts.network as NetworkName | undefined, home: opts.home };
 
   if (cmd === 'init') {
-    const { lincoln, keyFile, encrypted, policyFile } = await Lincoln.init(base);
+    const { lincoln, keyFile, encrypted, policyFile } = await Lincoln.init({ ...base, allowPlaintextKey: !!opts['insecure-plaintext-key'] });
     return out([
       `Agent wallet created on ${lincoln.net.label}.`,
       `  private address  ${lincoln.privateAddress}`,

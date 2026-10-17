@@ -1,6 +1,8 @@
 // Rough USD values for spending limits only (never for proofs or amounts). Dollar stablecoins count
-// as $1, ETH comes from Coinbase's public spot price, tokenized stocks from Robinhood's public stock
-// token prices (already adjusted for corporate actions). Unknown assets have no price.
+// as $1; ETH and tokenized stocks come through the Lincoln app's /prices proxy (Coinbase spot, Robinhood
+// stock-token prices), so neither price source sees this machine's IP or what it is about to trade.
+// Unknown assets have no price.
+import { NET } from './network.js';
 const cache = new Map<string, { at: number; usd: number | null }>();
 const TTL = 60_000;
 
@@ -16,8 +18,7 @@ export async function usdPrice(symbol: string, kind: string): Promise<number | n
   let usd: number | null = null;
   try {
     if (kind === 'stable' || ['USDG', 'USDC', 'USDT'].includes(key)) usd = 1;
-    else if (key === 'ETH' || key === 'WETH') usd = Number((await fetchJson('https://api.coinbase.com/v2/prices/ETH-USD/spot')).data.amount);
-    else if (kind === 'stock') usd = Number((await fetchJson(`https://api.robinhood.com/rhj/prices/${encodeURIComponent(key)}`)).quotes[0].tokenAsk);
+    else if (key === 'ETH' || key === 'WETH' || kind === 'stock') usd = Number((await fetchJson(`${NET.app}/prices/${key === 'WETH' ? 'ETH' : encodeURIComponent(key)}`)).usd);
   } catch { usd = null; }
   if (usd !== null && !(usd > 0)) usd = null;
   cache.set(key, { at: Date.now(), usd });

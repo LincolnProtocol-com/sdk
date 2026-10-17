@@ -37,6 +37,8 @@ export interface OpenOptions {
   home?: string;
   /** Passphrase for an encrypted agent key; default $LINCOLN_PASSPHRASE. */
   passphrase?: string;
+  /** init only: allow an unencrypted key on mainnet (testnet always allows it). */
+  allowPlaintextKey?: boolean;
   rpc?: string;
   /** Lincoln app origin serving relays, bridge proxy and circuit files. */
   app?: string;
@@ -81,6 +83,16 @@ export function paths(home: string, network: NetworkName) {
 }
 const defaultHome = () => process.env.LINCOLN_HOME?.replace(/^~(?=$|\/)/, homedir()) ?? join(homedir(), '.lincoln');
 const readJson = async <T,>(file: string, fallback: T): Promise<T> => { const t = await readFile(file, 'utf8').catch(() => null); return t ? JSON.parse(t) as T : fallback; };
+// Quotes and activity name amounts, recipients and job IDs: kept encrypted with the wallet's cache key, like notes.
+async function readSealed<T>(file: string, key: Uint8Array, fallback: T): Promise<T> {
+  const box = await readJson<{ iv?: string; data?: string } | T>(file, fallback);
+  if (!box || typeof box !== 'object' || !('iv' in box) || !('data' in box)) return (box as T) ?? fallback; // legacy plain file
+  try { return JSON.parse(new TextDecoder().decode(gcm(key, sdk.fromHex(box.iv!)).decrypt(sdk.fromHex(box.data!)))) as T; } catch { return fallback; }
+}
+async function writeSealed(file: string, key: Uint8Array, value: unknown) {
+  const iv = randomBytes(12);
+  await writePrivate(file, JSON.stringify({ iv: sdk.toHex(iv), data: sdk.toHex(gcm(key, iv).encrypt(new TextEncoder().encode(JSON.stringify(value)))) }));
+}
 
 export class Lincoln {
   private constructor(
@@ -93,6 +105,7 @@ export class Lincoln {
     const network = opts.network ?? (process.env.LINCOLN_NETWORK as NetworkName | undefined) ?? 'mainnet', home = opts.home ?? defaultHome(), files = paths(home, network);
     const net = selectNetwork(network, opts);
     const passphrase = opts.passphrase ?? process.env.LINCOLN_PASSPHRASE;
+    if (!passphrase && !net.testnet && !opts.allowPlaintextKey) throw new LincolnError('PASSPHRASE_REQUIRED', 'Set LINCOLN_PASSPHRASE to encrypt the mainnet agent key (or pass --insecure-plaintext-key for a throwaway test wallet).');
     const kf = await createKey(files.key, net.id, passphrase || undefined);
     if (!(await readFile(files.policy).then(() => true, () => false))) await writeDefaultPolicy(files.policy);
     const lincoln = await Lincoln.open({ ...opts, network, home, passphrase });
@@ -154,15 +167,15 @@ export class Lincoln {
 
   private async spentTodayUsd() {
     const since = Date.now() - 24 * 3600_000;
-    return (await readJson<ActivityRow[]>(this.files.activity, [])).filter(r => r.status !== 'failed' && Date.parse(r.at) > since).reduce((t, r) => t + (r.usd ?? 0), 0);
+    return (await readSealed<ActivityRow[]>(this.files.activity, this.cacheKey, [])).filter(r => r.status !== 'failed' && Date.parse(r.at) > since).reduce((t, r) => t + (r.usd ?? 0), 0);
   }
   private async record(row: ActivityRow) {
-    const rows = await readJson<ActivityRow[]>(this.files.activity, []);
+    const rows = await readSealed<ActivityRow[]>(this.files.activity, this.cacheKey, []);
     const i = rows.findIndex(r => r.quoteId === row.quoteId);
     if (i >= 0) rows[i] = row; else rows.push(row);
-    await writePrivate(this.files.activity, JSON.stringify(rows.slice(-500), null, 2));
+    await writeSealed(this.files.activity, this.cacheKey, rows.slice(-500));
   }
-  async activity(limit = 20): Promise<ActivityRow[]> { return (await readJson<ActivityRow[]>(this.files.activity, [])).slice(-limit).reverse(); }
+  async activity(limit = 20): Promise<ActivityRow[]> { return (await readSealed<ActivityRow[]>(this.files.activity, this.cacheKey, [])).slice(-limit).reverse(); }
 
   private async finishQuote(q: Omit<QuoteRecord, 'id' | 'network' | 'createdAt' | 'expiresAt' | 'usd' | 'policy'> & { expiresAt?: number }, pool: PoolInfo, raw: bigint, recipient?: string): Promise<QuoteRecord> {
     const price = await usdPrice(pool.symbol, pool.kind);
@@ -172,10 +185,10 @@ export class Lincoln {
     const { expiresAt, ...rest } = q;
     const record: QuoteRecord = { id: `q_${randomBytes(4).toString('hex')}`, network: this.net.name, createdAt: new Date(now).toISOString(),
       expiresAt: new Date(Math.min(expiresAt ?? Infinity, now + QUOTE_TTL_MS)).toISOString(), ...rest, usd, policy };
-    const quotes = await readJson<Record<string, QuoteRecord>>(this.files.quotes, {});
+    const quotes = await readSealed<Record<string, QuoteRecord>>(this.files.quotes, this.cacheKey, {});
     for (const [id, old] of Object.entries(quotes)) if (Date.parse(old.expiresAt) < now - 3600_000) delete quotes[id];
     quotes[record.id] = record;
-    await writePrivate(this.files.quotes, JSON.stringify(quotes, null, 2));
+    await writeSealed(this.files.quotes, this.cacheKey, quotes);
     return record;
   }
 
@@ -261,7 +274,7 @@ export class Lincoln {
   }
 
   async getQuote(id: string): Promise<QuoteRecord> {
-    const q = (await readJson<Record<string, QuoteRecord>>(this.files.quotes, {}))[id];
+    const q = (await readSealed<Record<string, QuoteRecord>>(this.files.quotes, this.cacheKey, {}))[id];
     if (!q) throw new LincolnError('UNKNOWN_QUOTE', `No quote ${id}. Quote again.`);
     return q;
   }
@@ -271,7 +284,7 @@ export class Lincoln {
     const q = await this.getQuote(id);
     if (q.network !== this.net.name) throw new LincolnError('WRONG_NETWORK', `Quote ${id} is for ${q.network}.`);
     if (Date.parse(q.expiresAt) < Date.now()) throw new LincolnError('QUOTE_EXPIRED', `Quote ${id} expired. Quote again.`);
-    const used = (await readJson<ActivityRow[]>(this.files.activity, [])).find(r => r.quoteId === id && r.status !== 'failed');
+    const used = (await readSealed<ActivityRow[]>(this.files.activity, this.cacheKey, [])).find(r => r.quoteId === id && r.status !== 'failed');
     if (used) throw new LincolnError('QUOTE_USED', `Quote ${id} was already executed${used.jobId ? ` (job ${used.jobId})` : ''}. Check its status instead of executing again.`);
     const check = checkPolicy(await this.policy(), { action: q.action, usd: q.usd, recipient: q.to, spentTodayUsd: await this.spentTodayUsd() });
     if (!check.allowed) throw new LincolnError(check.code!, check.reason!);
@@ -336,7 +349,7 @@ export class Lincoln {
 
   /** Current state of a relay job started by this wallet. */
   async status(jobId: string) {
-    const row = (await readJson<ActivityRow[]>(this.files.activity, [])).find(r => r.jobId === jobId);
+    const row = (await readSealed<ActivityRow[]>(this.files.activity, this.cacheKey, [])).find(r => r.jobId === jobId);
     if (!row) throw new LincolnError('UNKNOWN_JOB', `No job ${jobId} in this wallet's activity.`);
     const job = await getJob(row.pool, jobId);
     return { jobId, action: row.action, asset: row.asset, amount: row.amount, status: job.status, txHash: job.hash, explorer: job.hash ? explorerTx(job.hash) : undefined };

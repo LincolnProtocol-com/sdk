@@ -45,7 +45,7 @@ export function selectNetwork(name: NetworkName, { rpc, app }: NetworkOptions = 
   const pools = Object.entries(net.profiles).map(([id, profile]) => {
     const asset = profile.pool.asset.toLowerCase(), meta = net.assets.find(a => a.address === asset);
     const routes = (net.routes[id] ?? []).map((r: any) => ({
-      id: r.id as string, protocol: r.route.protocol as string, target: r.route.target as PoolId, route: r.route as SwapRoute,
+      id: r.id as string, protocol: (['Uniswap V3', 'UP Slipstream'][r.route.protocol] ?? String(r.route.protocol)) as string, target: r.route.target as PoolId, route: r.route as SwapRoute,
       tokens: [r.route.hops[0].tokenIn, ...r.route.hops.map((h: any) => h.tokenOut)] as string[],
     }));
     const info: PoolInfo = {
