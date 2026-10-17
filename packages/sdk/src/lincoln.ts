@@ -293,7 +293,10 @@ export class Lincoln {
       } else if (q.action === 'withdraw') {
         if (!bridgeLive()) throw new LincolnError('BRIDGE_TESTNET', 'Bridging works on Robinhood Chain mainnet only.');
         const target = findChain(q.chain!)!;
+        // The bridge must be quoted for exactly what the withdrawal delivers: load the relay's schedule first.
+        await loadServiceFees(q.pool, relayConfig);
         const fee = relayFee(q.pool, raw);
+        if (fmt(fee, pool.decimals) !== q.fee) throw new LincolnError('QUOTE_MOVED', `The relay fee changed (${fmt(fee, pool.decimals)} ${q.asset}). Quote again.`);
         const live = await quoteBridge({ pool, dest: target, amount: raw - fee, recipient: q.to!, refundTo: q.to!, live: true });
         if (!live.depositAddress || !live.requestId) throw new LincolnError('BRIDGE_UNAVAILABLE', 'The bridge did not return a deposit address.');
         if (q.minReceives && Number(live.amountOutFormatted) < Number(q.minReceives)) throw new LincolnError('QUOTE_MOVED', `The bridge now pays ${live.amountOutFormatted}, below the quoted minimum. Quote again.`);

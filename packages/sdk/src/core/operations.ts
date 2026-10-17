@@ -99,7 +99,10 @@ export async function spend({ account, pool, amount, recipient, receiver, onStag
     const prepared = sdk.prepareJoinSplit({
       account, profile: info.profile, state,
       outputs: receiver ? [{ receiver, value: amount }] : [],
-      externalData: { recipient: receiver ? ZERO : recipient ?? ZERO, feeRecipient: fee > 0n ? info.relayer : ZERO, processor: info.relayer, publicIn: 0n, publicOut: receiver ? fee : amount, fee },
+      // A private send's fee is its only public output and pays the relayer, so nothing goes to a
+      // recipient; the relay still requires a non-zero one whenever there is a public output, so a
+      // fee-paying send names the relayer (the same for every send: nothing to link).
+      externalData: { recipient: receiver ? (fee > 0n ? info.relayer : ZERO) : recipient ?? ZERO, feeRecipient: fee > 0n ? info.relayer : ZERO, processor: info.relayer, publicIn: 0n, publicOut: receiver ? fee : amount, fee },
     });
     return {
       prepared, transaction: proof => sdk.publicTransaction(prepared, proof),
