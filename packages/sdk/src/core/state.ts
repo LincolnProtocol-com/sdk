@@ -19,14 +19,19 @@ export async function loadPoolState(pool: PoolId): Promise<PoolState> {
   const state = await relayState(pool) as PoolState;
   const profile = POOLS[pool].profile;
   if (state.pool?.toLowerCase() !== profile.pool.address.toLowerCase() || state.chainId !== profile.chain.id) throw new Error('Relay returned state for a different pool.');
-  const [known, policy] = await Promise.all([
+  const epoch = state.asp?.epoch ? BigInt(state.asp.epoch) : 0n;
+  const [known, accepted] = await Promise.all([
     publicClient.readContract({ address: profile.pool.address as Hex, abi: POOL_ABI, functionName: 'knownRoot', args: [BigInt(state.root)] }) as Promise<boolean>,
-    publicClient.readContract({ address: profile.registry.address as Hex, abi: REGISTRY_ABI, functionName: 'latestPolicy' }) as Promise<readonly [bigint, bigint, bigint]>,
+    epoch > 0n
+      ? publicClient.readContract({ address: profile.registry.address as Hex, abi: REGISTRY_ABI, functionName: 'acceptedPolicy', args: [epoch] }) as Promise<readonly [bigint, bigint]>
+      : Promise.resolve([0n, 0n] as const),
   ]);
   if (!known) throw new Error('Relay state root is not known to the pool contract.');
-  const [root, epoch, validUntil] = policy;
-  // The relay may lag one epoch behind the registry; only accept a policy the chain confirms.
-  if (state.asp && (String(root) !== state.asp.root || String(epoch) !== state.asp.epoch || String(validUntil) !== state.asp.validUntil)) {
+  // Sets publish every few seconds, so the relay's epoch is often a round behind the registry's latest. The registry
+  // (and the pool, when it verifies a proof) still accepts recent epochs: the last 16, a superseded one for an hour.
+  // Use the relay's set only if the chain accepts exactly that epoch, root and expiry.
+  const [root, validUntil] = accepted;
+  if (state.asp && (root === 0n || String(root) !== state.asp.root || String(validUntil) !== state.asp.validUntil)) {
     state.asp = { ...state.asp, leaves: null, expired: true };
   }
   return state;
