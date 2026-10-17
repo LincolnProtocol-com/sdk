@@ -29,6 +29,9 @@ function cached<T>(key: string, load: () => Promise<T>, keep: (v: T) => boolean)
   return value;
 }
 
+/** The last association set the chain confirmed, per pool, kept while the relay waits on a new one. */
+const lastSet = new Map<PoolId, NonNullable<PoolState['asp']>>();
+
 export async function loadPoolState(pool: PoolId): Promise<PoolState> {
   const state = await relayState(pool) as PoolState;
   const profile = POOLS[pool].profile;
@@ -47,8 +50,17 @@ export async function loadPoolState(pool: PoolId): Promise<PoolState> {
   // (and the pool, when it verifies a proof) still accepts recent epochs: the last 16, a superseded one for an hour.
   // Use the relay's set only if the chain accepts exactly that epoch, root and expiry.
   const [root, validUntil] = accepted;
-  if (state.asp && (root === 0n || String(root) !== state.asp.root || String(validUntil) !== state.asp.validUntil)) {
-    state.asp = { ...state.asp, leaves: null, expired: true };
+  const confirmed = !!state.asp && Array.isArray(state.asp.leaves) && root !== 0n && String(root) === state.asp.root && String(validUntil) === state.asp.validUntil;
+  if (confirmed) lastSet.set(pool, state.asp);
+  else if (state.asp) {
+    // Right after a publication the relay names the new epoch but has no leaves until it confirms (setAvailable
+    // false). The previous set is still accepted on chain for a while, so keep showing balances against it instead
+    // of turning every note into "waiting"; notes added since stay waiting, as they should.
+    const prev = lastSet.get(pool);
+    // Asked fresh (not from the cache): an older epoch can drop out of the accepted window at any time.
+    const prevOk = prev && prev.epoch !== state.asp.epoch && await (publicClient.readContract({ address: profile.registry.address as Hex, abi: REGISTRY_ABI, functionName: 'acceptedPolicy', args: [BigInt(prev.epoch)] }) as Promise<readonly [bigint, bigint]>)
+      .then(([r, v]) => r !== 0n && String(r) === prev.root && String(v) === prev.validUntil, () => false);
+    state.asp = prevOk ? prev! : { ...state.asp, leaves: null, expired: true };
   }
   return state;
 }
