@@ -15,13 +15,13 @@ Usage
 
   lincoln quote send <amount> <asset> <lincoln3:…>
   lincoln quote swap <amount> <from> <to>
-  lincoln quote withdraw <amount> <asset> <0x…> [--to <chain>]
+  lincoln quote withdraw <amount> <asset> <address> [--to <chain>] [--refund <0x…>]
   lincoln quote deposit <amount> <asset>
   lincoln execute <quoteId> [--approve]         run a quote (also: send|swap|withdraw|deposit --quote <id>)
 
   lincoln send <amount> <asset> <lincoln3:…>    quote, confirm, execute in one step
   lincoln swap <amount> <from> <to>
-  lincoln withdraw <amount> <asset> <0x…> [--to <chain>]
+  lincoln withdraw <amount> <asset> <address> [--to <chain>] [--refund <0x…>]
   lincoln deposit <amount> <asset>
   lincoln status <jobId>
 
@@ -32,6 +32,8 @@ Options
   --yes                       skip the confirmation prompt (spends that need approval still need --approve)
   --approve                   the user approved this spend (above the policy's approval threshold)
   --to <chain>                withdraw to ${supportedChains().join(', ')}
+  --refund <0x…>              Robinhood Chain address a failed bridge or swap refunds to
+                              (required for zcash, bitcoin, solana and tron; use a fresh one)
 
 Environment
   LINCOLN_PASSPHRASE          encrypts the agent key at init and unlocks it later (required on mainnet;
@@ -42,7 +44,7 @@ const { values: opts, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     network: { type: 'string' }, home: { type: 'string' }, json: { type: 'boolean' }, yes: { type: 'boolean', short: 'y' },
-    approve: { type: 'boolean' }, 'insecure-plaintext-key': { type: 'boolean' }, to: { type: 'string' }, quote: { type: 'string' }, slippage: { type: 'string' }, help: { type: 'boolean', short: 'h' },
+    approve: { type: 'boolean' }, 'insecure-plaintext-key': { type: 'boolean' }, to: { type: 'string' }, refund: { type: 'string' }, quote: { type: 'string' }, slippage: { type: 'string' }, help: { type: 'boolean', short: 'h' },
   },
 });
 const json = !!opts.json;
@@ -85,7 +87,7 @@ async function quote(lincoln: Lincoln, action: string, args: string[]): Promise<
   switch (action) {
     case 'send': need(3, 'quote send <amount> <asset> <lincoln3:…>'); return lincoln.quoteSend({ amount, asset: a, to: b });
     case 'swap': need(3, 'quote swap <amount> <from> <to>'); return lincoln.quoteSwap({ amount, from: a, to: b, slippageBps: opts.slippage ? Number(opts.slippage) : undefined });
-    case 'withdraw': need(3, 'quote withdraw <amount> <asset> <0x…> [--to <chain>]'); return lincoln.quoteWithdraw({ amount, asset: a, to: b, chain: opts.to });
+    case 'withdraw': need(3, 'quote withdraw <amount> <asset> <address> [--to <chain>] [--refund <0x…>]'); return lincoln.quoteWithdraw({ amount, asset: a, to: b, chain: opts.to, refund: opts.refund });
     case 'deposit': need(2, 'quote deposit <amount> <asset>'); return lincoln.quoteDeposit({ amount, asset: a });
     default: throw new LincolnError('USAGE', 'quote what? send, swap, withdraw or deposit.');
   }
