@@ -32,11 +32,14 @@ export const findIntentChain = (name: string) => {
 };
 
 /** What a pool's asset becomes on an intents chain, with the 1Click asset it leaves Robinhood Chain as. Stocks can't go. */
-export function intentRoute(pool: PoolInfo, chain: IntentChain): (IntentAsset & { origin: string }) | null {
-  if (pool.kind === 'native') return { origin: ORIGIN_ETH, ...chain.native };
-  if (pool.asset === USDG) return { origin: ORIGIN_USDG, ...chain.stable };
-  return null;
+export function intentRoute(pool: PoolInfo, chain: IntentChain, receive?: string): (IntentAsset & { origin: string }) | null {
+  const origin = pool.kind === 'native' ? ORIGIN_ETH : pool.asset === USDG ? ORIGIN_USDG : null;
+  if (!origin) return null;
+  const to = (receive && intentReceivable(chain).find(c => c.symbol.toLowerCase() === receive.toLowerCase())) || (pool.kind === 'native' ? chain.native : chain.stable);
+  return { origin, ...to };
 }
+/** Every token that can arrive on an intents chain. */
+export const intentReceivable = (chain: IntentChain): IntentAsset[] => [chain.native, chain.stable].filter((c, i, all) => all.findIndex(x => x.symbol === c.symbol) === i);
 
 export interface IntentQuote { amountOut: string; amountOutFormatted: string; minAmountOut: string; timeEstimate: number; depositAddress?: string }
 

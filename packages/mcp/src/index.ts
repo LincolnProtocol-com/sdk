@@ -53,14 +53,15 @@ server.registerTool('lincoln_quote', {
     asset: z.string().describe('Asset spent: ETH, USDG, NVDA… (for swap, the asset you pay with)'),
     to: z.string().optional().describe('send: lincoln3: address · withdraw: recipient address on the destination chain · swap: asset to receive'),
     chain: z.string().optional().describe('withdraw only: destination chain, default robinhood'),
+    receive: z.string().optional().describe('withdraw to another chain only: token that arrives, e.g. WBTC, cbBTC, USDC; default is the chain\'s ETH (or native coin) for ETH and its dollar for USDG'),
     refund: z.string().optional().describe('withdraw only: Robinhood Chain 0x address a failed bridge or swap refunds to; required for solana, zcash, bitcoin and tron'),
   },
   annotations: read,
-}, ({ action, amount, asset, to, chain, refund }) => run(async l => {
+}, ({ action, amount, asset, to, chain, refund, receive }) => run(async l => {
   if (action !== 'deposit' && !to) throw new LincolnError('USAGE', `"to" is required for ${action}.`);
   if (action === 'send') return l.quoteSend({ amount, asset, to: to! });
   if (action === 'swap') return l.quoteSwap({ amount, from: asset, to: to! });
-  if (action === 'withdraw') return l.quoteWithdraw({ amount, asset, to: to!, chain, refund });
+  if (action === 'withdraw') return l.quoteWithdraw({ amount, asset, to: to!, chain, refund, receive });
   return l.quoteDeposit({ amount, asset });
 }));
 

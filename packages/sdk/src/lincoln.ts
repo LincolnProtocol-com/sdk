@@ -21,8 +21,8 @@ import { checkPolicy, readPolicy, writeDefaultPolicy, type Policy } from './core
 import { usdPrice } from './core/prices.js';
 import { minChangeFor } from './core/denominations.js';
 import { poolCaps, capError, swapCapCheck, swapCapMessage } from './core/caps.js';
-import { BRIDGE_DONE, bridgeLive, bridgeRoute, bridgeStatus, findChain, nudgeBridge, quoteBridge, DEST_CHAINS } from './core/bridge.js';
-import { INTENT_CHAINS, INTENT_DONE, findIntentChain, intentRoute, intentStatus, quoteIntent, submitIntentDeposit } from './core/intents.js';
+import { BRIDGE_DONE, bridgeLive, bridgeRoute, bridgeStatus, findChain, nudgeBridge, quoteBridge, receivable, DEST_CHAINS } from './core/bridge.js';
+import { INTENT_CHAINS, INTENT_DONE, findIntentChain, intentReceivable, intentRoute, intentStatus, quoteIntent, submitIntentDeposit } from './core/intents.js';
 import type { PrivateKeyAccount } from 'viem/accounts';
 
 export type { OpStage };
@@ -227,7 +227,7 @@ export class Lincoln {
 
   /** Withdrawal to a 0x address on Robinhood Chain, or on Base, Arbitrum, Ethereum, Optimism or BSC via Relay, or to
    *  Solana via Relay, or to Zcash, Bitcoin or Tron via NEAR Intents (non-0x chains need `refund`, a Robinhood Chain address used only if the swap fails). */
-  async quoteWithdraw({ asset, amount, to, chain: dest, refund }: { asset: string; amount: string; to: string; chain?: string; refund?: string }): Promise<QuoteRecord> {
+  async quoteWithdraw({ asset, amount, to, chain: dest, refund, receive }: { asset: string; amount: string; to: string; chain?: string; refund?: string; receive?: string }): Promise<QuoteRecord> {
     const pool = findPool(asset), raw = parseAmount(amount, pool);
     const intent = dest ? findIntentChain(dest) : undefined;
     // Chains without 0x addresses (the intents chains, Solana through Relay) need a Robinhood Chain refund address.
@@ -251,7 +251,9 @@ export class Lincoln {
           ...(exact ? ['This uses up your notes exactly, so it leaves no private change, which makes the withdrawal easier to spot. Withdrawing a little less avoids that.'] : [])] }, pool, raw, to);
     }
     if (intent) {
-      const route = intentRoute(pool, intent);
+      const options = intentReceivable(intent).map(c => c.symbol);
+      if (receive && !options.some(o => o.toLowerCase() === receive.toLowerCase())) throw new LincolnError('UNKNOWN_TOKEN', `${intent.name} can receive ${options.join(' or ')}.`);
+      const route = intentRoute(pool, intent, receive);
       if (!route) throw new LincolnError('NOT_BRIDGEABLE', `${pool.symbol} can't go to ${intent.name}; swap it to ETH or USDG first.`);
       const q = await quoteIntent({ route, amount: raw - fee, recipient: to.trim(), refundTo: refund!.trim(), dry: true }).catch(e => { throw new LincolnError('BRIDGE_UNAVAILABLE', (e as Error).message); });
       const time = q.timeEstimate < 90 ? `~${Math.max(1, q.timeEstimate)}s` : `~${Math.round(q.timeEstimate / 60)} min`;
@@ -261,10 +263,12 @@ export class Lincoln {
     }
     const target = findChain(dest!);
     if (!target) throw new LincolnError('UNKNOWN_CHAIN', `Unknown chain "${dest}". Use ${supportedChains().join(', ')}.`);
-    const route = bridgeRoute(pool, target);
+    const options = receivable(target).map(c => c.symbol);
+    if (receive && !options.some(o => o.toLowerCase() === receive.toLowerCase())) throw new LincolnError('UNKNOWN_TOKEN', `${target.name} can receive ${options.join(', ')}.`);
+    const route = bridgeRoute(pool, target, receive);
     if (!route) throw new LincolnError('NOT_BRIDGEABLE', `${pool.symbol} can't be bridged; swap it to ETH or USDG first.`);
     const refundTo = refund?.trim() || to.trim();
-    const q = await quoteBridge({ pool, dest: target, amount: raw - fee, recipient: to.trim(), refundTo, live: false });
+    const q = await quoteBridge({ pool, dest: target, receive, amount: raw - fee, recipient: to.trim(), refundTo, live: false });
     return this.finishQuote({ ...base, chain: target.name, ...(refund ? { refund: refundTo } : {}), receives: q.amountOutFormatted, receivesAsset: route.symbol, minReceives: fmt(BigInt(q.minAmountOut), route.decimals),
       notes: [`Bridged to ${target.name} by Relay in ~${Math.max(1, q.timeEstimate)}s. Refunds, if the bridge can't fill, go to ${refund ? refundTo : 'the same address'} on Robinhood Chain.`,
         ...(bridgeLive() ? [] : ['Testnet: this is a preview with live mainnet prices and cannot be executed.'])] }, pool, raw, to);
@@ -341,7 +345,7 @@ export class Lincoln {
         message = `Withdrew ${q.receives} ${q.asset} to ${q.to}.`;
       } else if (q.action === 'withdraw' && findIntentChain(q.chain!)) {
         if (!bridgeLive()) throw new LincolnError('BRIDGE_TESTNET', 'Cross-chain withdrawals work on Robinhood Chain mainnet only.');
-        const intent = findIntentChain(q.chain!)!, route = intentRoute(pool, intent)!;
+        const intent = findIntentChain(q.chain!)!, route = intentRoute(pool, intent, q.receivesAsset)!;
         await loadServiceFees(q.pool, relayConfig);
         const fee = relayFee(q.pool, raw);
         if (fmt(fee, pool.decimals) !== q.fee) throw new LincolnError('QUOTE_MOVED', `The relay fee changed (${fmt(fee, pool.decimals)} ${q.asset}). Quote again.`);
@@ -366,7 +370,7 @@ export class Lincoln {
         await loadServiceFees(q.pool, relayConfig);
         const fee = relayFee(q.pool, raw);
         if (fmt(fee, pool.decimals) !== q.fee) throw new LincolnError('QUOTE_MOVED', `The relay fee changed (${fmt(fee, pool.decimals)} ${q.asset}). Quote again.`);
-        const live = await quoteBridge({ pool, dest: target, amount: raw - fee, recipient: q.to!, refundTo: q.refund ?? q.to!, live: true });
+        const live = await quoteBridge({ pool, dest: target, receive: q.receivesAsset, amount: raw - fee, recipient: q.to!, refundTo: q.refund ?? q.to!, live: true });
         if (!live.depositAddress || !live.requestId) throw new LincolnError('BRIDGE_UNAVAILABLE', 'The bridge did not return a deposit address.');
         if (q.minReceives && Number(live.amountOutFormatted) < Number(q.minReceives)) throw new LincolnError('QUOTE_MOVED', `The bridge now pays ${live.amountOutFormatted}, below the quoted minimum. Quote again.`);
         result = await spend({ account: this.account, pool: q.pool, amount: raw, recipient: live.depositAddress, onStage, persist, onSubmitted: submitted });

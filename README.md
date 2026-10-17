@@ -57,7 +57,7 @@ const r = await agent.execute(q.id);            // { txHash, jobId, explorer, me
 - **Spends.** Pool state comes from the relay and is checked against the chain (Merkle root and association-set policy) before use. The proof is generated and verified locally, then the relay submits it. Job IDs are kept, so an interrupted spend is followed, never paid twice.
 - **Circuits.** Downloaded once from the Lincoln app, checked against the SHA-256 pins in this package, cached in `~/.lincoln/circuits`.
 - **Network.** Pool profiles, swap routes and circuit pins ship with the package; a relay can't redirect funds. Relays, the bridge proxy and circuit files are reached through the Lincoln app's own origin, so third parties don't see the agent's IP.
-- **Withdrawals to other chains** (Base, Arbitrum, Ethereum, Optimism, BSC, Solana; ETH arrives as BNB on BSC and SOL on Solana, USDG stays USDG on Ethereum and Solana, USDT on BSC, USDC elsewhere) go through a single-use Relay deposit address; withdrawals to **Zcash, Bitcoin and Tron** go through NEAR Intents. Solana, Zcash, Bitcoin and Tron need `--refund <0x…>`, a Robinhood Chain address used only if the swap fails. Mainnet only.
+- **Withdrawals to other chains** (Base, Arbitrum, Ethereum, Optimism, BSC, Solana; ETH arrives as BNB on BSC and SOL on Solana, USDG stays USDG on Ethereum and Solana, USDT on BSC, USDC elsewhere) go through a single-use Relay deposit address (`--receive wbtc|cbbtc|usdc|…` picks another token there); withdrawals to **Zcash, Bitcoin and Tron** go through NEAR Intents. Solana, Zcash, Bitcoin and Tron need `--refund <0x…>`, a Robinhood Chain address used only if the swap fails. Mainnet only.
 
 ## Spending policy
 

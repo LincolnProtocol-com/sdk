@@ -33,6 +33,7 @@ You control a private balance in Lincoln, a privacy pool on Robinhood Chain. You
 | "Pay 25 USDG to lincoln3:…" | `lincoln quote send 25 usdg lincoln3:… --json` → show → `lincoln execute <id>` |
 | "Buy $500 of NVDA" | `lincoln quote swap 500 usdg nvda --json` → show minimum NVDA → `lincoln execute <id>` |
 | "Send 0.1 ETH to 0xabc on Base" | `lincoln quote withdraw 0.1 eth 0xabc… --to base --json` → confirm → `lincoln execute <id>` |
+| "Send 0.1 ETH to 0xabc on Arbitrum as WBTC" | `lincoln quote withdraw 0.1 eth 0xabc… --to arbitrum --receive wbtc --json` → confirm → `lincoln execute <id>` |
 | "Send 0.05 ETH to my Zcash address t1…" | `lincoln quote withdraw 0.05 eth t1… --to zcash --refund <fresh 0x on Robinhood Chain> --json` → confirm → `lincoln execute <id>` (ask the user for the refund address) |
 | "Send everything back to me" | Ask for the user's `lincoln3:` address; quote a private send of the ready balance |
 
