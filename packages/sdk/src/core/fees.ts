@@ -94,15 +94,34 @@ export function billingGasPrice(d: GasPricing, base: bigint | null): bigint | nu
 let baseFeeWei: bigint | null = null, baseFeeAt = 0;
 /** A quote's gas price when it reports no base fee (relays billing their signing price): used only while no base fee is known. */
 let quotedPriceWei: bigint | null = null;
+let readBaseFee = async (): Promise<bigint | null> => (await publicClient.getBlock({ blockTag: 'latest' })).baseFeePerGas ?? null;
 async function refreshGasPrice() {
   if (Date.now() - baseFeeAt < 30_000) return;
   baseFeeAt = Date.now();
-  try { baseFeeWei = (await publicClient.getBlock({ blockTag: 'latest' })).baseFeePerGas ?? null; } catch { baseFeeAt = 0; }
+  try { baseFeeWei = await readBaseFee(); } catch { baseFeeAt = 0; }
 }
-/** Records what a binding quote was priced on, so the next estimates agree with it. */
-export function rememberQuotePrice(q: { baseFeePerGas?: string; gasPriceWei?: string }) {
-  if (units(q.baseFeePerGas) > 0n) { baseFeeWei = units(q.baseFeePerGas); baseFeeAt = Date.now(); }
+/** Test seams: replace the chain read (null restores it) and drop the cached base fee. */
+export function setBaseFeeReader(read: (() => Promise<bigint | null>) | null) { readBaseFee = read ?? (async () => (await publicClient.getBlock({ blockTag: 'latest' })).baseFeePerGas ?? null); }
+export function forgetBaseFee() { baseFeeWei = null; quotedPriceWei = null; baseFeeAt = 0; }
+/** What the current estimates rest on: the chain's base fee, a quote's price (no base fee reported), or only the relay's cap. */
+export const gasEstimateBasis = (): 'base-fee' | 'quote' | 'cap' => (baseFeeWei !== null ? 'base-fee' : quotedPriceWei !== null ? 'quote' : 'cap');
+/** Records what a binding quote was priced on, so the next estimates agree with it. A reported base fee of 0 is a known snapshot. */
+export function rememberQuotePrice(q: { baseFeePerGas?: string | null; gasPriceWei?: string }) {
+  if (typeof q.baseFeePerGas === 'string' && /^\d+$/.test(q.baseFeePerGas)) { baseFeeWei = BigInt(q.baseFeePerGas); baseFeeAt = Date.now(); }
   else if (units(q.gasPriceWei) > 0n) quotedPriceWei = units(q.gasPriceWei);
+}
+/** Before an estimate decides anything (a balance or minimum-amount check), makes sure it rests on a known price: re-reads the
+ *  chain's base fee and, failing that, seeds it from a fresh quote of the largest shape. The cap alone never rejects a spend.
+ *  Throws (FEE_QUOTES_UNAVAILABLE or the relay's reason) when no price can be had. Nothing to do under a fixed schedule. */
+export async function settleBaseFee(pool: PoolId, kind: FeeQuoteKind, gross: bigint): Promise<void> {
+  const d = feePolicy(pool).dynamic;
+  if (!d) return;
+  const why = gasEstimateUnavailable(d);
+  if (why) throw new RelayError(why);
+  if (gasEstimateBasis() !== 'cap') return;
+  baseFeeAt = 0; await refreshGasPrice();
+  if (gasEstimateBasis() === 'cap') await priceFee(pool, kind, gross, { outputCount: ESTIMATE_OUTPUTS }); // rememberQuotePrice seeds it
+  if (gasEstimateBasis() === 'cap') throw new RelayError('FEE_QUOTES_UNAVAILABLE');
 }
 /** Why no gas estimate can be shown now, or null: the relay's own reason, or a base fee above its cap (the relay then
  *  refuses to quote; an estimate at the cap would hide that). An unread base fee estimates at the cap, the relay's ceiling. */

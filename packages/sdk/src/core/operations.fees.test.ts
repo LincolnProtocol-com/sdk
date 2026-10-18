@@ -9,7 +9,7 @@ const relay = vi.hoisted(() => ({
   config: null as any, quotes: [] as any[], submits: [] as any[], reject: [] as any[], ids: 0,
   /** Total fee a quote returns, like the backend: buffered raw gas (the shape's model, or a larger gasUnits) × gas price. */
   price: (r: any) => ((BigInt(r.gasUnits ?? MODEL[r.outputCount]) * 12n + 9n) / 10n) * 30_000_000n,
-  ttlMs: 120_000, now: () => Date.now(), stateNotes: [] as bigint[],
+  ttlMs: 120_000, now: () => Date.now(), stateNotes: [] as bigint[], baseFee: null as string | null,
 }));
 vi.mock('./relay.js', async orig => {
   const real = await orig<typeof import('./relay.js')>();
@@ -20,7 +20,7 @@ vi.mock('./relay.js', async orig => {
       if (!relay.config.feeQuotes) throw new real.RelayError('UNEXPECTED_FIELDS');
       const n = relay.quotes.length, model = MODEL[r.outputCount];
       const q = { schema: 'lincoln-service-fee-quote/v3', quoteId: String(n).padStart(64, 'a'), kind: r.kind, grossAmount: String(r.grossAmount), outputCount: r.outputCount,
-        totalFee: String(relay.price(r)), rawGasUnits: r.gasUnits ? String(r.gasUnits) : model, gasPriceWei: '30000000', expiresAt: new Date(relay.now() + relay.ttlMs).toISOString(), request: r };
+        totalFee: String(relay.price(r)), rawGasUnits: r.gasUnits ? String(r.gasUnits) : model, gasPriceWei: '30000000', ...(relay.baseFee ? { baseFeePerGas: relay.baseFee } : {}), expiresAt: new Date(relay.now() + relay.ttlMs).toISOString(), request: r };
       relay.quotes.push(q); return q;
     },
     submitJob: async (_pool: string, job: any) => { relay.submits.push(job); const e = relay.reject.shift(); if (e) throw e; return { id: job.id, status: 'pending' }; },
@@ -36,7 +36,7 @@ const { POOLS, selectNetwork } = await import('./pools.js');
 // An unreachable RPC: no chain gas price until a quote supplies one, so first estimates use the policy cap.
 selectNetwork('mainnet', { rpc: 'http://127.0.0.1:9' });
 const { outputCount, recoveryOf, spend, exitNote } = await import('./operations.js');
-const { FEE_POLICY, billingGasPrice, estimateFee, feeBreakdown, forgetServiceFees, gasEstimateUnavailable, loadServiceFees, parseGasPricing, parseServiceFees, priceFee, rememberQuotePrice } = await import('./fees.js');
+const { FEE_POLICY, billingGasPrice, estimateFee, feeBreakdown, forgetServiceFees, forgetBaseFee, gasEstimateBasis, gasEstimateUnavailable, loadServiceFees, parseGasPricing, parseServiceFees, priceFee, rememberQuotePrice, setBaseFeeReader, settleBaseFee } = await import('./fees.js');
 const { RelayError } = await import('./relay.js');
 
 const pool = 'eth', info = POOLS[pool], profile = info.profile, account = sdk.createAccount('a1'.repeat(32)), self = sdk.receiverAddress(account, profile);
@@ -293,5 +293,47 @@ describe('base-fee billing (lincoln-base-fee-billing/v1)', () => {
     expect(gasEstimateUnavailable(d)).toBe('FEE_QUOTES_UNAVAILABLE');
     expect(gasEstimateUnavailable({ ...d, available: false, unavailableReason: 'GAS_ASSET_PRICE_STALE' })).toBe('GAS_ASSET_PRICE_STALE');
     forgetServiceFees(pool);
+  });
+});
+
+describe('an unknown base fee never decides admission', () => {
+  const BILLING = { ...PRICING, gasBufferBps: 0, billingGasPrice: { schema: 'lincoln-base-fee-billing/v1', multiplierBps: 11000, minimumAdditionWei: '0' } };
+  it('first chain read failing: the cap estimate would refuse 0.0001 ETH; settleBaseFee re-reads, then seeds the base fee from one quote', async () => {
+    setBaseFeeReader(async () => { throw new Error('rpc down'); }); forgetBaseFee();
+    await fresh(BILLING, [ETH]);
+    relay.baseFee = '20000000'; relay.price = r => BigInt(r.gasUnits ?? MODEL[r.outputCount]) * 22_000_000n; // the relay's billing at that base fee
+    const gross = 10n ** 14n;
+    expect(gasEstimateBasis()).toBe('cap');
+    expect(estimateFee(pool, 'withdrawal', gross, 2)).toBeGreaterThan(gross); // what a bare estimate would have rejected on
+    await settleBaseFee(pool, 'withdrawal', gross);
+    expect(relay.quotes).toHaveLength(1); expect(relay.quotes[0].outputCount).toBe(2);
+    expect(gasEstimateBasis()).toBe('base-fee');
+    expect(estimateFee(pool, 'withdrawal', gross, 2)).toBe(gross * 30n / 10_000n + 1_800_000n * 22_000_000n);
+    expect(estimateFee(pool, 'withdrawal', gross, 2)).toBeLessThan(gross);
+    await settleBaseFee(pool, 'withdrawal', gross);
+    expect(relay.quotes).toHaveLength(1); // settled once, no further quotes
+    relay.baseFee = null; setBaseFeeReader(null); forgetBaseFee();
+  });
+  it('chain and relay both down: FEE_QUOTES_UNAVAILABLE, not a fee', async () => {
+    setBaseFeeReader(async () => { throw new Error('rpc down'); }); forgetBaseFee();
+    await fresh(BILLING, [ETH]);
+    const quotes = relay.quotes.length;
+    // The quote endpoint has left dynamic pricing too (UNEXPECTED_FIELDS), so no price can be had.
+    relay.config = { serviceFees: V2, feeQuotes: null };
+    await expect(settleBaseFee(pool, 'withdrawal', 10n ** 14n)).rejects.toMatchObject({ code: expect.stringMatching(/UNEXPECTED_FIELDS|FEE_QUOTES_UNAVAILABLE/) });
+    expect(relay.quotes.length).toBe(quotes);
+    setBaseFeeReader(null); forgetBaseFee();
+  });
+  it('a reported base fee of 0 is a known snapshot', async () => {
+    forgetBaseFee(); await fresh(BILLING, [ETH]);
+    rememberQuotePrice({ baseFeePerGas: '20000000' }); expect(gasEstimateBasis()).toBe('base-fee');
+    rememberQuotePrice({ baseFeePerGas: '0' });
+    expect(estimateFee(pool, 'withdrawal', ETH, 2)).toBe(3n * 10n ** 15n); // service fee only: gas is free at a zero base fee
+    forgetBaseFee();
+  });
+  it('fixed schedule: nothing to settle, no quote', async () => {
+    forgetBaseFee(); await fresh(null, [ETH]);
+    await settleBaseFee(pool, 'withdrawal', 10n ** 14n);
+    expect(relay.quotes).toHaveLength(0);
   });
 });
