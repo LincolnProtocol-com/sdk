@@ -36,7 +36,7 @@ const { POOLS, selectNetwork } = await import('./pools.js');
 // An unreachable RPC: no chain gas price until a quote supplies one, so first estimates use the policy cap.
 selectNetwork('mainnet', { rpc: 'http://127.0.0.1:9' });
 const { outputCount, recoveryOf, spend, exitNote } = await import('./operations.js');
-const { FEE_POLICY, estimateFee, feeBreakdown, forgetServiceFees, loadServiceFees, parseGasPricing, parseServiceFees, priceFee } = await import('./fees.js');
+const { FEE_POLICY, billingGasPrice, estimateFee, feeBreakdown, forgetServiceFees, gasEstimateUnavailable, loadServiceFees, parseGasPricing, parseServiceFees, priceFee, rememberQuotePrice } = await import('./fees.js');
 const { RelayError } = await import('./relay.js');
 
 const pool = 'eth', info = POOLS[pool], profile = info.profile, account = sdk.createAccount('a1'.repeat(32)), self = sdk.receiverAddress(account, profile);
@@ -270,5 +270,28 @@ describe('outputCount', () => {
     expect(outputCount('joinsplit', { inputSignals: {}, publicSignals: ['1', '0', '1', '1', '1', '1', '1', '0', '0'] })).toBe(0);
     expect(outputCount('joinsplit', { inputSignals: {}, publicSignals: ['1', '0', '1', '1', '1', '1', '1', '5', '0'] })).toBe(1);
     expect(outputCount('holder-exit', { inputSignals: {}, publicSignals: ['1', '1', '1', '1', '1'] })).toBe(0);
+  });
+});
+
+describe('base-fee billing (lincoln-base-fee-billing/v1)', () => {
+  it('price = max(ceil(base × multiplier), base + addition) capped; billed units carry only the billing buffer; no estimate above the cap', () => {
+    const BILLING = { ...PRICING, gasBufferBps: 0, executionGasBufferBps: 2000, billingGasPrice: { schema: 'lincoln-base-fee-billing/v1', multiplierBps: 11000, minimumAdditionWei: '0' },
+      gasModels: { ...PRICING.gasModels, withdrawal: { 0: '600000', 1: '1200000', 2: '1720000' } } };
+    const d = parseGasPricing(BILLING, info.asset)!;
+    expect(d.billing).toEqual({ multiplierBps: 11000, minAdditionWei: 0n }); expect(d.bufferBps).toBe(0);
+    expect(billingGasPrice(d, 20_000_000n)).toBe(22_000_000n);
+    expect(billingGasPrice(d, 95_000_000n)).toBe(100_000_000n); // the relay's cap
+    expect(billingGasPrice({ ...d, billing: { multiplierBps: 10_000, minAdditionWei: 5_000_000n } }, 20_000_000n)).toBe(25_000_000n);
+    expect(billingGasPrice(parseGasPricing(PRICING, info.asset)!, 20_000_000n)).toBe(40_000_000n); // no billing policy: the signing price
+    expect(billingGasPrice(d, null)).toBeNull();
+    FEE_POLICY.eth = { ...parseServiceFees(V2), dynamic: d };
+    rememberQuotePrice({ baseFeePerGas: '20000000', gasPriceWei: '22000000' });
+    // The handoff's example: one-output withdrawal of 0.001 ETH at a 0.02 gwei base fee costs 0.000003 + 0.0000264 ETH.
+    expect(estimateFee(pool, 'withdrawal', 10n ** 15n, 1)).toBe(3n * 10n ** 12n + 26_400_000_000_000n);
+    expect(gasEstimateUnavailable(d)).toBeNull();
+    rememberQuotePrice({ baseFeePerGas: '150000000' });
+    expect(gasEstimateUnavailable(d)).toBe('FEE_QUOTES_UNAVAILABLE');
+    expect(gasEstimateUnavailable({ ...d, available: false, unavailableReason: 'GAS_ASSET_PRICE_STALE' })).toBe('GAS_ASSET_PRICE_STALE');
+    forgetServiceFees(pool);
   });
 });

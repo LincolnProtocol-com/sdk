@@ -24,6 +24,9 @@ export interface GasPricing {
   models: { withdrawal: bigint[]; privateTransfer: bigint[]; holderExit: bigint };
   /** ETH wei per base unit of the pool asset; null when the relay has no fresh price for it. */
   price: { num: bigint; den: bigint } | null;
+  /** Base-fee billing (lincoln-base-fee-billing/v1): the user's gas price is max(base × multiplier, base + addition).
+   *  Null when the relay bills its signing price, max(2 × base, base + 0.02 gwei). */
+  billing: { multiplierBps: number; minAdditionWei: bigint } | null;
 }
 export interface FeePolicy { id: string | null; gas: bigint; withdrawal: Part; holderExit: Part; privateTransfer: Part; swapBps: number; label: string; known?: false; dynamic?: GasPricing }
 
@@ -61,11 +64,13 @@ export function parseGasPricing(raw: unknown, asset: string): GasPricing | undef
   const p = Array.isArray(q.assetPrices) ? q.assetPrices.find((x: any) => String(x?.asset).toLowerCase() === asset.toLowerCase()) : undefined;
   const native = /^0x0{40}$/i.test(asset);
   const fresh = p && Date.parse(p.expiresAt) > Date.now() && units(p.weiPerBaseUnitNumerator) > 0n && units(p.weiPerBaseUnitDenominator) > 0n;
+  const b = q.billingGasPrice;
   return {
     available: q.available !== false, unavailableReason: q.unavailableReason ?? null,
     bufferBps: Number.isInteger(q.gasBufferBps) ? q.gasBufferBps : 2000, maxGasPrice: units(q.maxGasPriceWei),
     models: { withdrawal: shape(m.withdrawal), privateTransfer: shape(m['private-transfer']), holderExit: units(m['holder-exit']) },
     price: native ? { num: 1n, den: 1n } : fresh ? { num: units(p.weiPerBaseUnitNumerator), den: units(p.weiPerBaseUnitDenominator) } : null,
+    billing: b && typeof b === 'object' && Number.isInteger(b.multiplierBps) && b.multiplierBps > 0 ? { multiplierBps: b.multiplierBps, minAdditionWei: units(b.minimumAdditionWei) } : null,
   };
 }
 
@@ -73,16 +78,37 @@ export function parseGasPricing(raw: unknown, asset: string): GasPricing | undef
 export const FEE_POLICY: Record<PoolId, FeePolicy> = {};
 export const feePolicy = (pool: PoolId) => FEE_POLICY[pool] ?? SPONSORED;
 
-/** The relay picks max(2 × base fee, base fee + 0.02 gwei), capped by its policy (backend quoteMainnetGasPrice).
- *  Kept per chain; refreshed by loadServiceFees and by every binding quote. Null until first read. */
-let gasPriceWei: bigint | null = null, gasPriceAt = 0;
+const max = (a: bigint, b: bigint) => (a > b ? a : b);
+/** The gas price the relay bills for one unit at this base fee: under base-fee billing max(ceil(base × multiplier),
+ *  base + addition), otherwise its signing price max(2 × base, base + 0.02 gwei); both capped by maxGasPriceWei
+ *  (backend quoteMainnetGasPrice). Null when the base fee is unknown. */
+export function billingGasPrice(d: GasPricing, base: bigint | null): bigint | null {
+  if (base === null) return null;
+  const raw = d.billing ? max(ceil(base * BigInt(d.billing.multiplierBps), 10_000n), base + d.billing.minAdditionWei) : max(base * 2n, base + 20_000_000n);
+  return d.maxGasPrice > 0n && raw > d.maxGasPrice ? d.maxGasPrice : raw;
+}
+
+/** The chain's latest base fee, the input of every local estimate. Kept per chain; refreshed by loadServiceFees (at most
+ *  every 30 s) and by every quote that reports the base fee it was priced on. Null until first read: a block without a
+ *  base fee gives no estimate rather than a guessed price. */
+let baseFeeWei: bigint | null = null, baseFeeAt = 0;
+/** A quote's gas price when it reports no base fee (relays billing their signing price): used only while no base fee is known. */
+let quotedPriceWei: bigint | null = null;
 async function refreshGasPrice() {
-  if (Date.now() - gasPriceAt < 30_000) return;
-  gasPriceAt = Date.now();
-  try {
-    const block = await publicClient.getBlock({ blockTag: 'latest' }), base = block.baseFeePerGas ?? await publicClient.getGasPrice();
-    gasPriceWei = base * 2n > base + 20_000_000n ? base * 2n : base + 20_000_000n;
-  } catch { gasPriceAt = 0; }
+  if (Date.now() - baseFeeAt < 30_000) return;
+  baseFeeAt = Date.now();
+  try { baseFeeWei = (await publicClient.getBlock({ blockTag: 'latest' })).baseFeePerGas ?? null; } catch { baseFeeAt = 0; }
+}
+/** Records what a binding quote was priced on, so the next estimates agree with it. */
+export function rememberQuotePrice(q: { baseFeePerGas?: string; gasPriceWei?: string }) {
+  if (units(q.baseFeePerGas) > 0n) { baseFeeWei = units(q.baseFeePerGas); baseFeeAt = Date.now(); }
+  else if (units(q.gasPriceWei) > 0n) quotedPriceWei = units(q.gasPriceWei);
+}
+/** Why no gas estimate can be shown now, or null: the relay's own reason, or a base fee above its cap (the relay then
+ *  refuses to quote; an estimate at the cap would hide that). An unread base fee estimates at the cap, the relay's ceiling. */
+export function gasEstimateUnavailable(d: GasPricing): string | null {
+  if (!d.available) return d.unavailableReason ?? 'FEE_QUOTES_UNAVAILABLE';
+  return baseFeeWei !== null && d.maxGasPrice > 0n && baseFeeWei > d.maxGasPrice ? 'FEE_QUOTES_UNAVAILABLE' : null;
 }
 /** Output count the shown estimates assume: the largest JoinSplit shape. A zero-value output has commitment 0 and is
  *  not counted, so a real spend has 0, 1 or 2 outputs; spends quote their actual count (operations.ts settles it). */
@@ -93,7 +119,7 @@ function dynamicGas(d: GasPricing, key: PartKey, outputs = ESTIMATE_OUTPUTS): bi
   if (!d.price) return 0n;
   const raw = key === 'holderExit' ? d.models.holderExit : d.models[key][outputs] ?? 0n;
   const gas = ceil(raw * BigInt(10_000 + d.bufferBps), 10_000n);
-  const price = gasPriceWei === null ? d.maxGasPrice : gasPriceWei > d.maxGasPrice && d.maxGasPrice > 0n ? d.maxGasPrice : gasPriceWei;
+  const price = billingGasPrice(d, baseFeeWei) ?? (quotedPriceWei !== null && quotedPriceWei <= d.maxGasPrice ? quotedPriceWei : d.maxGasPrice);
   return ceil(gas * price * d.price.den, d.price.num);
 }
 const gasPart = (p: FeePolicy, key: PartKey, outputs?: number) => (!p[key].gas ? 0n : p.dynamic ? dynamicGas(p.dynamic, key, outputs) : p.gas);
@@ -175,7 +201,7 @@ export async function priceFee(pool: PoolId, kind: FeeQuoteKind, gross: bigint, 
     || (q.pool && q.pool.toLowerCase() !== info.profile.pool.address.toLowerCase()) || (q.processor && q.processor.toLowerCase() !== info.relayer.toLowerCase())
     ) throw new RelayError('FEE_QUOTE_BINDING_MISMATCH');
   if (kind !== 'private-transfer' && fee >= gross) throw new RelayError('SERVICE_FEE_EXCEEDS_OUTPUT');
-  if (q.gasPriceWei) { gasPriceWei = units(q.gasPriceWei); gasPriceAt = Date.now(); }
+  rememberQuotePrice(q);
   return { fee, quote: q };
 }
 /** Raw gas units a quote was priced on (its model or a raised estimate). */

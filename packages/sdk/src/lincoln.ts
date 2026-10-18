@@ -12,7 +12,7 @@ import { NET, type NetworkInfo, type NetworkName } from './core/network.js';
 import { POOLS, chain, explorerTx, findPool, publicClient, selectNetwork, type PoolInfo } from './core/pools.js';
 import { loadPoolState } from './core/state.js';
 import { RelayError, getJob, quoteMinOut, quoteOut, relayConfig, relayHealth, type Quote as RelayQuote } from './core/relay.js';
-import { exitFee, feePolicy, loadServiceFees, relayFee, transferFee } from './core/fees.js';
+import { exitFee, feePolicy, gasEstimateUnavailable, loadServiceFees, relayFee, transferFee } from './core/fees.js';
 import { deposit, getQuote, inspect, spend, swap, type OpStage } from './core/operations.js';
 import { setCircuitCache } from './core/prover.js';
 import { createKey, readKeyFile, unlockKey, walletKeys, writePrivate } from './core/keystore.js';
@@ -199,6 +199,13 @@ export class Lincoln {
     return record;
   }
 
+  /** Loads the pool's fee schedule. Under per-transaction gas pricing a relay that can't price gas right now (no fresh
+   *  token price, base fee above its cap) pauses sends and withdrawals instead of admitting them on a guessed fee. */
+  private async gasPriced(pool: PoolInfo) {
+    const policy = await loadServiceFees(pool.id, relayConfig), why = policy.dynamic && gasEstimateUnavailable(policy.dynamic);
+    if (why) throw new LincolnError(why, new RelayError(why).message);
+  }
+
   private async ready(pool: PoolInfo, raw: bigint) {
     const h = inspect(this.account, pool.id, await loadPoolState(pool.id));
     if (raw > h.spendable) {
@@ -220,7 +227,7 @@ export class Lincoln {
   async quoteSend({ asset, amount, to }: { asset: string; amount: string; to: string }): Promise<QuoteRecord> {
     const pool = findPool(asset), raw = parseAmount(amount, pool);
     try { decodeReceiver(to, pool.id); } catch (e) { throw new LincolnError('INVALID_RECIPIENT', (e as Error).message); }
-    await loadServiceFees(pool.id, relayConfig);
+    await this.gasPriced(pool);
     const fee = transferFee(pool.id);
     await this.ready(pool, raw + fee);
     return this.finishQuote({ action: 'send', asset: pool.symbol, pool: pool.id, decimals: pool.decimals, amount: fmt(raw, pool.decimals), amountRaw: String(raw),
@@ -241,7 +248,7 @@ export class Lincoln {
       if (!refund || !isAddress(refund.trim())) throw new LincolnError('REFUND_REQUIRED', `Withdrawals to ${foreign.name} need a refund address on Robinhood Chain (--refund 0x…), used only if the bridge or swap fails. Use a fresh one.`);
     } else if (!isAddress(to.trim())) throw new LincolnError('INVALID_RECIPIENT', 'Enter a 0x address.');
     if (refund && !isAddress(refund.trim())) throw new LincolnError('INVALID_REFUND', 'The refund address must be a 0x address on Robinhood Chain.');
-    await loadServiceFees(pool.id, relayConfig);
+    await this.gasPriced(pool);
     const fee = relayFee(pool.id, raw);
     if (fee >= raw) throw new LincolnError('AMOUNT_TOO_SMALL', 'Amount is too small to cover the relayer fee.');
     await this.ready(pool, raw);

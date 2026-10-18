@@ -26,6 +26,9 @@ export interface FeeQuote {
   schema: string; quoteId: string; kind: FeeQuoteKind; grossAmount: string; outputCount: number;
   percentageServiceFee: string; fixedServiceFee: string; quotedGasFee: string; totalFee: string; netRecipientAmount: string | null;
   rawGasUnits?: string; gasUnits: string; gasPriceWei: string; gasCostWei: string; issuedAt: string; expiresAt: string; pool?: string; processor?: string;
+  /** Base-fee billing (lincoln-base-fee-billing/v1): the base fee the billing price was derived from. gasPriceWei is that
+   *  final billing price; the relay's own execution ceiling (executionGasUnits/executionGasPriceWei) is not charged. */
+  baseFeePerGas?: string; billingGasPriceWei?: string;
 }
 
 const MESSAGES: Record<string, string> = {
