@@ -11,7 +11,8 @@
   "scripts": {
     "build": "tsc -b packages/sdk packages/cli packages/mcp",
     "test": "vitest run",
-    "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo"
+    "clean": "rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo",
+    "release": "npm run clean && npm run build && npm test && npm publish -w packages/sdk -w packages/cli -w packages/mcp"
   },
   "devDependencies": {
     "@types/node": "26.6.5",

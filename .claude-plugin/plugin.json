@@ -1,0 +1,27 @@
+{
+  "name": "lincoln",
+  "version": "0.1.0",
+  "description": "A private balance on Robinhood Chain for Claude: send, swap and withdraw ETH, USDG and tokenized stocks with zero-knowledge proofs made on your machine.",
+  "author": {
+    "name": "Lincoln Protocol",
+    "url": "https://lincolnprotocol.com"
+  },
+  "homepage": "https://docs.lincolnprotocol.com/developers/agents",
+  "repository": "https://github.com/LincolnProtocol-com/sdk",
+  "license": "Apache-2.0",
+  "keywords": [
+    "privacy",
+    "robinhood-chain",
+    "wallet",
+    "mcp"
+  ],
+  "mcpServers": {
+    "lincoln": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@lincolnprotocol/mcp"
+      ]
+    }
+  }
+}

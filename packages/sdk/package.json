@@ -3,6 +3,24 @@
   "version": "0.1.0",
   "license": "Apache-2.0",
   "description": "Private balances on Robinhood Chain for agents and apps: Lincoln privacy pool SDK for Node.",
+  "keywords": [
+    "privacy",
+    "zero-knowledge",
+    "robinhood-chain",
+    "ai-agent",
+    "wallet",
+    "usdg",
+    "tokenized-stocks"
+  ],
+  "homepage": "https://docs.lincolnprotocol.com/developers/agents",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LincolnProtocol-com/sdk.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/LincolnProtocol-com/sdk/issues"
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -10,7 +28,8 @@
     ".": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "engines": {
     "node": ">=20"
@@ -22,5 +41,8 @@
     "poseidon-lite": "0.3.0",
     "snarkjs": "0.7.5",
     "viem": "2.57.7"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

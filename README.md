@@ -2,7 +2,7 @@
 
 Give an AI agent (or any program) its own private balance on Robinhood Chain. Hold ETH, dollars and tokenized stocks in the [Lincoln](https://lincolnprotocol.com) privacy pool; send, swap and withdraw with zero-knowledge proofs generated on your machine and submitted by a relayer, so the agent's wallet never appears on chain.
 
-> **Status:** pre-release. Lincoln runs on Robinhood Chain mainnet (chain 4663): nine pools (ETH, USDG, seven stock tokens). Private spending opens when the mainnet relay is live; packages are not published to npm yet.
+> **Status:** release candidate on Robinhood Chain mainnet (chain 4663): 13 pools (ETH, USDG, USDe, eight stock tokens, PONS and CASHCAT). The contracts are not independently audited yet.
 
 | Package | What it is |
 | --- | --- |
@@ -11,18 +11,36 @@ Give an AI agent (or any program) its own private balance on Robinhood Chain. Ho
 | [`@lincolnprotocol/mcp`](packages/mcp) | MCP server for Claude, Codex, Cursor and other MCP clients |
 | [`skills/lincoln`](skills/lincoln/SKILL.md) | Agent skill: how to use the tools safely |
 
-## Quick start (from source)
+## Install
 
-```sh
-npm install && npm run build
-node packages/cli/dist/index.js init          # creates ~/.lincoln/mainnet/agent.json and ~/.lincoln/policy.json
-node packages/cli/dist/index.js address       # share the lincoln3: address to fund it privately
-node packages/cli/dist/index.js balance
-node packages/cli/dist/index.js quote swap 100 usdg nvda
-node packages/cli/dist/index.js execute q_…
+**Claude Code** (skill + MCP server in one plugin):
+
+```
+/plugin install lincoln --marketplace LincolnProtocol-com/sdk
 ```
 
-Set `LINCOLN_PASSPHRASE` before `init` to encrypt the agent key (scrypt + AES-GCM); it is then needed to open the wallet.
+Then create the wallet (`npx @lincolnprotocol/cli init`, below) and start Claude Code with `LINCOLN_PASSPHRASE` set in its environment.
+
+**Any MCP client:**
+
+```sh
+export LINCOLN_PASSPHRASE='…'                 # encrypts the agent key; required on mainnet
+npx @lincolnprotocol/cli init                 # creates ~/.lincoln/mainnet/agent.json and ~/.lincoln/policy.json
+claude mcp add lincoln -e LINCOLN_PASSPHRASE="$LINCOLN_PASSPHRASE" -- npx -y @lincolnprotocol/mcp
+codex mcp add lincoln --env LINCOLN_PASSPHRASE="$LINCOLN_PASSPHRASE" -- npx -y @lincolnprotocol/mcp
+```
+
+**Other harnesses** read [AGENTS.md](AGENTS.md); the skill alone is `cp -r skills/lincoln ~/.claude/skills/`.
+
+## CLI
+
+```sh
+npm i -g @lincolnprotocol/cli
+lincoln address       # share the lincoln3: address to fund it privately
+lincoln balance
+lincoln quote swap 100 usdg nvda
+lincoln execute q_…
+```
 
 ## MCP
 
@@ -30,9 +48,9 @@ Set `LINCOLN_PASSPHRASE` before `init` to encrypt the agent key (scrypt + AES-GC
 {
   "mcpServers": {
     "lincoln": {
-      "command": "node",
-      "args": ["/path/to/lincoln-sdk/packages/mcp/dist/index.js"],
-      "env": { "LINCOLN_HOME": "~/.lincoln", "LINCOLN_NETWORK": "mainnet" }
+      "command": "npx",
+      "args": ["-y", "@lincolnprotocol/mcp"],
+      "env": { "LINCOLN_PASSPHRASE": "…" }
     }
   }
 }
@@ -78,6 +96,7 @@ Same [Terms](https://docs.lincolnprotocol.com/legal/terms) as the app: no funds 
 ```sh
 npm run build    # tsc -b for all three packages
 npm test         # vitest
+npm run release  # clean build, tests, then publish sdk, cli and mcp to npm (needs npm login)
 ```
 
 Protocol code in `packages/sdk/src/core` is ported from the Lincoln web app (`sdk.ts`, `relay.ts`, `fees.ts`, `state.ts`, `chain-state.ts`, `caps.ts`, `bridge.ts`) and must stay byte-compatible with it.

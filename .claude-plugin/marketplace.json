@@ -1,0 +1,15 @@
+{
+  "name": "lincolnprotocol",
+  "description": "Lincoln Protocol plugins for Claude Code: private balances on Robinhood Chain.",
+  "owner": {
+    "name": "Lincoln Protocol",
+    "url": "https://lincolnprotocol.com"
+  },
+  "plugins": [
+    {
+      "name": "lincoln",
+      "source": "./",
+      "description": "A private balance on Robinhood Chain for Claude: the Lincoln skill plus the MCP server."
+    }
+  ]
+}
