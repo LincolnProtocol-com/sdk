@@ -5,7 +5,7 @@ import { erc20Abi, type Hex, type WalletClient } from 'viem';
 import * as sdk from './sdk.js';
 import { POOLS, POOL_ABI, chain, publicClient, type PoolId } from './pools.js';
 import { loadPoolState, type PoolState } from './state.js';
-import { RETRYABLE, RelayError, newJobId, relayQuote, submitJob, waitForJob, type FeeQuoteKind, type JobKind, type Quote } from './relay.js';
+import { RETRYABLE, RelayError, newJobId, notCreated, relayQuote, submitJob, waitForJob, type FeeQuoteKind, type JobKind, type Quote } from './relay.js';
 import { prove, type Circuit, type ProofStage } from './prover.js';
 import { estimateFee, forgetServiceFees, priceFee, quoteLive, quotedRawGas, type PricedFee } from './fees.js';
 import { minChangeFor } from './denominations.js';
@@ -76,8 +76,9 @@ const SAME_REQUEST_LATER = new Set(['PENDING_NONCE', 'RELAY_UNRESOLVED_TRANSACTI
 export function recoveryOf(e: RelayError): 'unused' | 'identical' | 'terminal' | 'uncertain' {
   const i = e.info;
   if (e.mayHaveRun || i.transactionHash || i.jobMayContinue !== false) return 'uncertain';
-  if (i.jobPersisted === false && i.retrySameId === true && (i.jobStatus === undefined || i.jobStatus === 'not-created')) return 'unused';
-  if (i.jobPersisted === true && i.retrySameId === true && i.recovery === 'RETRY_IDENTICAL_REQUEST_WITH_ORIGINAL_ID') return 'identical';
+  // The relay's considered "never created" verdict, every field agreeing (a missing field is not agreement).
+  if (notCreated(i) && (i.recovery === undefined || i.recovery === 'FIX_CAUSE_AND_RETRY_SAME_ID')) return 'unused';
+  if (i.jobPersisted === true && i.retrySameId === true && i.useNewId !== true && i.recovery === 'RETRY_IDENTICAL_REQUEST_WITH_ORIGINAL_ID') return 'identical';
   if (i.jobPersisted === true && i.retrySameId === false && (i.jobStatus === 'cancelled' || i.jobStatus === 'reverted')) return 'terminal';
   return 'uncertain';
 }

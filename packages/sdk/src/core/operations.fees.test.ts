@@ -199,6 +199,11 @@ describe('what a refused submit allows', () => {
     expect(recoveryOf(err('FEE_QUOTE_COST_EXCEEDED', { jobPersisted: false, jobMayContinue: true, retrySameId: false }))).toBe('uncertain');
     expect(recoveryOf(err('STALE_ASP_PROOF', { jobPersisted: true, jobMayContinue: false, retrySameId: false, jobStatus: 'pending' }))).toBe('uncertain');
     expect(recoveryOf(err('HTTP_504', { jobPersisted: false, jobMayContinue: false, retrySameId: true }))).toBe('uncertain'); // the answer was lost
+    expect(recoveryOf(err('JOB_NOT_FOUND', { jobPersisted: false, jobMayContinue: true, retrySameId: false, useNewId: false, jobStatus: 'processing', recovery: 'QUERY_JOB_WITH_ORIGINAL_ID' }))).toBe('uncertain'); // still being processed
+    expect(recoveryOf(err('FEE_QUOTE_COST_EXCEEDED', { jobPersisted: false, jobMayContinue: false, retrySameId: true, useNewId: true, jobStatus: 'not-created' }))).toBe('uncertain'); // contradictory
+    expect(recoveryOf(err('FEE_QUOTE_COST_EXCEEDED', { jobPersisted: false, jobMayContinue: false, retrySameId: true }))).toBe('uncertain'); // no job status
+    expect(recoveryOf(err('FEE_QUOTE_COST_EXCEEDED', { jobPersisted: false, jobMayContinue: false, retrySameId: true, jobStatus: 'not-created', recovery: 'OPERATOR_RECONCILIATION_REQUIRED' }))).toBe('uncertain');
+    expect(recoveryOf(err('PENDING_NONCE', { jobPersisted: true, jobMayContinue: false, retrySameId: true, useNewId: true, recovery: 'RETRY_IDENTICAL_REQUEST_WITH_ORIGINAL_ID' }))).toBe('uncertain');
   });
   it('cost exceeded before any job: re-quotes on the relay estimate with the same, unused ID', async () => {
     await fresh(PRICING, [5n * ETH]);

@@ -76,7 +76,7 @@ const MESSAGES: Record<string, string> = {
   RELAY_NOT_LIVE: 'Private sends, withdrawals and swaps open as soon as the relay goes live. Deposits work now, and a deposit can always be returned to the address that made it.',
 };
 /** Recovery fields the relay attaches to errors (docs/FRONTEND_FEEDBACK_20261016.md in the backend). */
-export interface RelayErrorInfo { errorId?: string; jobPersisted?: boolean | null; jobMayContinue?: boolean; retrySameId?: boolean; jobStatus?: string; recovery?: string; transactionHash?: string;
+export interface RelayErrorInfo { errorId?: string; jobPersisted?: boolean | null; jobMayContinue?: boolean; retrySameId?: boolean; useNewId?: boolean; jobStatus?: string; recovery?: string; transactionHash?: string;
   /** FEE_QUOTE_COST_EXCEEDED: the relay's own estimate, to pass as gasUnits in a fresh quote. */
   feeRequote?: { rawGasUnits: string; gasPriceWei: string } }
 export class RelayError extends Error {
@@ -108,8 +108,8 @@ async function callOnce<T>(pool: PoolId, path: string, body?: unknown): Promise<
   const json = await res.json().catch(() => null);
   if (!res.ok || !json || json.error) {
     const code = typeof json?.error === 'string' ? json.error : json?.error?.code ?? `HTTP_${res.status}`;
-    const { errorId, jobPersisted, jobMayContinue, retrySameId, jobStatus, recovery, transactionHash, feeRequote } = json ?? {};
-    throw new RelayError(code, { errorId, jobPersisted, jobMayContinue, retrySameId, jobStatus, recovery, transactionHash, feeRequote });
+    const { errorId, jobPersisted, jobMayContinue, retrySameId, useNewId, jobStatus, recovery, transactionHash, feeRequote } = json ?? {};
+    throw new RelayError(code, { errorId, jobPersisted, jobMayContinue, retrySameId, useNewId, jobStatus, recovery, transactionHash, feeRequote });
   }
   return json as T;
 }
@@ -132,29 +132,45 @@ export const newJobId = () => btoa(String.fromCharCode(...crypto.getRandomValues
 export const submitJob = (pool: PoolId, job: { id: string; kind: JobKind; routeId?: string; feeQuoteId?: string; transaction: unknown }) => call<RelayJob>(pool, '/v3/jobs', job);
 export const getJob = (pool: PoolId, id: string) => call<RelayJob>(pool, `/v3/jobs/${id}`);
 
+/** Whether a JOB_NOT_FOUND answer is the relay's considered verdict that the job was never created: every recovery
+ *  field says so and nothing was signed. A job still being processed (jobStatus "processing", jobMayContinue true),
+ *  an unconfirmed write (jobPersisted null) or an answer with missing or contradictory fields is not. */
+export const notCreated = (i: RelayErrorInfo) =>
+  i.jobPersisted === false && i.jobStatus === 'not-created' && i.jobMayContinue === false && i.retrySameId === true && i.useNewId !== true && !i.transactionHash;
+
 /** Polls a submitted job until it settles. Network hiccups keep polling: the job ID is the source of truth.
- *  `unsure` (the submit call's answer was lost) also tolerates JOB_NOT_FOUND for a while, since the relay
- *  records the job before it answers but our request may still be in flight. */
-export async function waitForJob(pool: PoolId, id: string, { timeoutMs = 180_000, unsure = false, pollMs = 2500 } = {}): Promise<RelayJob> {
+ *  `unsure` (the submit call's answer was lost) also follows JOB_NOT_FOUND: the relay answers status reads at once,
+ *  so our request may still be being processed there (jobStatus "processing") or still be on its way (a Worker
+ *  queue, a retry). Only the relay's explicit "not created" verdict (notCreated), seen twice after the request can no
+ *  longer be in flight (`inFlightMs`), means nothing was sent. Running out of time with no verdict keeps the ID:
+ *  the outcome is unknown, not failed. */
+export async function waitForJob(pool: PoolId, id: string, { timeoutMs = 180_000, unsure = false, pollMs = 2500, inFlightMs = 90_000 } = {}): Promise<RelayJob> {
   const started = Date.now(), until = started + timeoutMs;
+  let seen = false, verdicts = 0;
   for (;;) {
     try {
       const job = await getJob(pool, id);
+      seen = true;
       if (job.status === 'confirmed') return job;
       if (job.status === 'reverted' && job.hash) throw new Error('The transaction reverted on chain.');
       // Cancelled, or reverted before any transaction: final, nothing was sent (backend keeps suggesting a re-query; don't loop).
       if (job.status === 'cancelled' || job.status === 'reverted') throw new Error('The relay stopped this request before sending anything. You can try again.');
     } catch (e) {
-      // Once a job exists, a failed status read (RPC hiccup, receipt not readable yet) says nothing about
-      // the job itself: keep asking until it settles or we time out. Only "no such job" is an answer.
-      const transient = e instanceof RelayError && (e.code !== 'JOB_NOT_FOUND' || (unsure && e.info.jobPersisted !== false && Date.now() - started < 90_000));
       // getJob turns network failures into RelayErrors, so anything else is a verdict thrown above.
-      if (!transient) {
-        if (unsure && e instanceof RelayError && e.code === 'JOB_NOT_FOUND') throw new Error('The relay did not receive this request. Nothing was sent; you can try again.');
-        throw e;
+      if (!(e instanceof RelayError)) throw e;
+      if (e.code === 'JOB_NOT_FOUND') {
+        // A job we know exists can't vanish: this is the relay's answer, not a hiccup.
+        if (!unsure || seen) throw e;
+        if (notCreated(e.info) && Date.now() - started >= inFlightMs && ++verdicts >= 2) throw new Error('The relay did not receive this request. Nothing was sent; you can try again.');
+        if (!notCreated(e.info)) verdicts = 0;
       }
+      // Anything else (RPC hiccup, receipt not readable yet, a dropped connection, a processing or unconfirmed
+      // job) says nothing final about the job: keep asking until it settles or we run out of time.
     }
-    if (Date.now() > until) throw new Error(`Still pending after ${timeoutMs / 1000}s. Job ${id} keeps running; check back shortly (refresh to see the result).`);
+    if (Date.now() > until) {
+      if (!seen) throw new Error(`The relay has neither confirmed receiving job ${id} nor ruled it out after ${Math.round(timeoutMs / 1000)}s. Its outcome is unknown: nothing is resent, and this ID is kept. Check back shortly.`);
+      throw new Error(`Still pending after ${timeoutMs / 1000}s. Job ${id} keeps running; check back shortly (refresh to see the result).`);
+    }
     await new Promise(r => setTimeout(r, pollMs));
   }
 }
