@@ -30,6 +30,12 @@ claude mcp add lincoln -e LINCOLN_PASSPHRASE="$LINCOLN_PASSPHRASE" -- npx -y @li
 codex mcp add lincoln --env LINCOLN_PASSPHRASE="$LINCOLN_PASSPHRASE" -- npx -y @lincolnprotocol/mcp
 ```
 
+**Just looking?** The hosted server is read-only and needs no key or install (pools, fees, relay status, prices, docs):
+
+```sh
+claude mcp add --transport http lincoln-docs https://mcp.lincolnprotocol.com/mcp
+```
+
 **Other harnesses** read [AGENTS.md](AGENTS.md); the skill alone is `cp -r skills/lincoln ~/.claude/skills/`.
 
 ## CLI
